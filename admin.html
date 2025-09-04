@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Admin — Learning Strategy Assistant (Clean)</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 40px; }
+      .card { padding: 16px 20px; border: 1px solid #cbd5e1; border-radius: 12px; display:inline-block; }
+      .ok { color: #16a34a; }
+      .bad { color: #dc2626; }
+      code { background:#f1f5f9; padding:2px 4px; border-radius:6px; }
+    </style>
+  </head>
+  <body>
+    <h1>Admin — Clean</h1>
+    <div class="card">
+      <p>This minimal admin page just verifies your API works.</p>
+      <p>Status: <span id="status">checking…</span></p>
+      <p><a href="/">Back to Home</a> · Try the endpoint directly: <a href="/api/ping" target="_blank"><code>/api/ping</code></a></p>
+    </div>
+
+    <script>
+      (async () => {
+        try {
+          const r = await fetch('/api/ping', { cache: 'no-store' });
+          const ok = r.ok;
+          const el = document.getElementById('status');
+          if (ok) {
+            const j = await r.json();
+            el.textContent = 'API reachable (' + j.time + ')';
+            el.className = 'ok';
+          } else {
+            el.textContent = 'API returned ' + r.status;
+            el.className = 'bad';
+          }
+        } catch (e) {
+          const el = document.getElementById('status');
+          el.textContent = 'Error: ' + (e && e.message ? e.message : e);
+          el.className = 'bad';
+        }
+      })();
+    </script>
+  </body>
+</html>
