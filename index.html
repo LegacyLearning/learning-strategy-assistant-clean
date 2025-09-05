@@ -28,4 +28,210 @@
       a.link{color:#a6c0ff;text-decoration:none}
 
       /* Uploader */
-      .drop{margin-top:12px;border:2px dashed #2a3566;bor
+      .uploader-title{display:flex;align-items:center;gap:8px;margin-top:16px}
+      .uploader-title b{font-weight:600}
+      .drop{margin-top:8px;border:3px dashed #2b5cff;border-radius:16px;padding:24px;display:flex;gap:12px;align-items:center;justify-content:center;min-height:180px;background:#0f1530}
+      .drop.drag{border-color:#6f8cff;background:#0f1530aa}
+      .drop button{background:#18204a;border:1px dashed #2a3566}
+      .files{margin-top:12px;display:grid;gap:8px}
+      .file{display:flex;align-items:center;gap:10px;background:#0f1530;border:1px solid #202a52;border-radius:10px;padding:8px 10px}
+      .file a{color:#a6c0ff;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:520px}
+      .file .meta{font:12px ui-monospace,Menlo,monospace;color:#9fb0d8}
+      .file .rm{margin-left:auto;background:transparent;border:1px solid #2a3566}
+      progress{width:140px;height:8px}
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Learning Strategy Assistant — Submit</h1>
+    </header>
+    <main>
+      <div class="card">
+        <p class="small">Fill this out, optionally add files, then click <b>Submit</b>. Your entry appears on the <a class="link" href="/admin.html" target="_blank">Admin Dashboard</a>.</p>
+
+        <form id="f">
+          <label for="org">Organization <span class="small">(required)</span></label>
+          <input id="org" placeholder="Acme Corp" required />
+
+          <div class="row">
+            <div>
+              <label for="name">Contact name</label>
+              <input id="name" placeholder="Jordan Lee" />
+            </div>
+            <div>
+              <label for="email">Contact email</label>
+              <input id="email" placeholder="jordan@example.com" />
+            </div>
+          </div>
+
+          <label for="summary">Summary</label>
+          <textarea id="summary" placeholder="Brief overview of the learning need or context…"></textarea>
+
+          <!-- BIG uploader -->
+          <div class="uploader-title">
+            <b>Files (optional)</b>
+            <span class="small">PDF, Word, images, etc.</span>
+          </div>
+          <div id="drop" class="drop">
+            <div>
+              <div style="text-align:center; margin-bottom:8px;">Drag &amp; drop files here</div>
+              <div style="display:flex;gap:10px;justify-content:center">
+                <button type="button" id="chooseBtn">Choose files</button>
+                <input type="file" id="fileInput" style="display:none" multiple />
+              </div>
+            </div>
+          </div>
+          <div id="files" class="files"></div>
+
+          <div class="btns">
+            <button id="submitBtn" type="submit">Submit</button>
+            <a class="link" href="/admin.html" target="_blank" style="align-self:center">Open Admin</a>
+          </div>
+        </form>
+
+        <div id="msg" class="msg">Ready.</div>
+      </div>
+    </main>
+
+    <script>
+      // ---------- helpers ----------
+      const $ = (id)=>document.getElementById(id);
+      const setMsg = (t,bad=false)=>{ const m=$('msg'); m.textContent=t; m.className='msg'+(bad?' bad':''); };
+      function validateEmail(v){ if(!v) return true; return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(v); }
+      function fmtSize(n){ if(n<1024) return n+' B'; if(n<1024*1024) return (n/1024).toFixed(1)+' KB'; return (n/1024/1024).toFixed(1)+' MB'; }
+
+      const state = { files: [] }; // array of { url, name, size }
+
+      // ---------- uploader ----------
+      function showFiles(){
+        const wrap = $('files');
+        if(!state.files.length){ wrap.innerHTML = ''; return; }
+        wrap.innerHTML = '<div class="small" style="margin-left:2px;">Uploaded files</div>' + 
+          state.files.map((f,i)=>`
+          <div class="file">
+            <a href="${f.url}" target="_blank" title="${f.name}">${f.name}</a>
+            <span class="meta">${fmtSize(f.size||0)}</span>
+            <button class="rm" type="button" onclick="removeFile(${i})">Remove</button>
+          </div>
+        `).join('');
+      }
+      window.removeFile = (i)=>{ state.files.splice(i,1); showFiles(); };
+
+      async function uploadOne(file){
+        const temp = document.createElement('div');
+        temp.className = 'file';
+        temp.innerHTML = `<span>${file.name}</span><progress max="100" value="25"></progress><span class="meta">${fmtSize(file.size)}</span>`;
+        $('files').appendChild(temp);
+
+        try{
+          const res = await fetch('/api/upload?filename='+encodeURIComponent(file.name), {
+            method: 'POST',
+            headers: { 'content-type': file.type || 'application/octet-stream' },
+            body: file
+          });
+          if(!res.ok){
+            const t = await res.text().catch(()=>res.statusText);
+            setMsg('Upload failed: '+t, true);
+            temp.remove();
+            return;
+          }
+          const data = await res.json();
+          state.files.push({ url: data.url, name: file.name, size: file.size||0 });
+          temp.remove();
+          showFiles();
+        }catch(e){
+          temp.remove();
+          setMsg('Upload error: '+(e?.message||e), true);
+        }
+      }
+
+      function handleFiles(files){
+        setMsg('Uploading '+files.length+' file(s)…');
+        const list = Array.from(files || []);
+        (async ()=>{
+          for(const f of list) await uploadOne(f);
+          setMsg('Uploads complete.');
+        })();
+      }
+
+      function setupDragAndDrop(){
+        const box = $('drop');
+        box.addEventListener('dragover', (e)=>{ e.preventDefault(); box.classList.add('drag'); });
+        box.addEventListener('dragleave', ()=> box.classList.remove('drag'));
+        box.addEventListener('drop', (e)=>{
+          e.preventDefault();
+          box.classList.remove('drag');
+          if(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length){
+            handleFiles(e.dataTransfer.files);
+          }
+        });
+      }
+
+      // ---------- submit ----------
+      async function submitForm(e){
+        e.preventDefault();
+        const org = $('org').value.trim();
+        const name = $('name').value.trim();
+        const email = $('email').value.trim();
+        const summary = $('summary').value.trim();
+
+        if(!org){ setMsg('Organization is required.', true); $('org').focus(); return; }
+        if(email && !validateEmail(email)){ setMsg('Please enter a valid email address.', true); $('email').focus(); return; }
+
+        // only send URLs to the server
+        const files = state.files.map(f=>f.url);
+
+        const payload = {
+          organization: org,
+          contact_name: name,
+          contact_email: email,
+          summary,
+          outcomes: [],
+          modules: [],
+          files
+        };
+
+        try{
+          $('submitBtn').disabled = true;
+          setMsg('Submitting…');
+          const res = await fetch('/api/submit', {
+            method:'POST',
+            headers:{ 'content-type':'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if(!res.ok){
+            const t = await res.text().catch(()=>res.statusText);
+            setMsg('Submit failed: ' + t, true);
+            $('submitBtn').disabled = false;
+            return;
+          }
+          const data = await res.json();
+          setMsg(`Saved! ID: ${data.id}.  View it in Admin →`, false);
+          const a = document.createElement('a');
+          a.textContent = 'Open Admin';
+          a.href = '/admin.html';
+          a.target = '_blank';
+          a.className = 'link';
+          $('msg').appendChild(document.createTextNode(' '));
+          $('msg').appendChild(a);
+
+          $('f').reset();
+          state.files = [];
+          showFiles();
+        }catch(e){
+          setMsg('Submit error: ' + (e?.message || e), true);
+        }finally{
+          $('submitBtn').disabled = false;
+        }
+      }
+
+      // ---------- init ----------
+      window.addEventListener('DOMContentLoaded', ()=>{
+        $('chooseBtn').addEventListener('click', ()=> $('fileInput').click());
+        $('fileInput').addEventListener('change', (e)=> handleFiles(e.target.files));
+        setupDragAndDrop();
+        $('f').addEventListener('submit', submitForm);
+      });
+    </script>
+  </body>
+</html>
