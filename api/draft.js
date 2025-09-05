@@ -1,7 +1,6 @@
 // api/draft.js
-// Generates outcomes/modules that are Behavioral, Specific, Measurable, Concise.
-// Grounds on uploaded document text when provided.
-// Returns shape your UI expects: { draft: { outcomes, modules }, lint? }
+// Hardened: never crashes; returns detailed error JSON on failure.
+// Shape: { draft: { outcomes, modules }, lint }
 
 export const config = { runtime: "nodejs18.x" };
 
@@ -9,7 +8,6 @@ import OpenAI from "openai";
 import { lintOutcomes, hasBlockingIssues } from "../lib/outcomes.js";
 import { extractTextFromUrl, capTexts } from "../lib/extract.js";
 
-// -------------------- helpers --------------------
 async function readJsonBody(req) {
   try {
     if (req.body && typeof req.body === "object") return req.body;
@@ -21,13 +19,11 @@ async function readJsonBody(req) {
     return {};
   }
 }
-
 function sendJson(res, status, obj) {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(obj));
 }
-
 function safeError(err) {
   return {
     name: err?.name,
@@ -43,11 +39,9 @@ const PREFERRED_VERBS = [
   "evaluate","prioritize","draft","produce","document","calibrate","troubleshoot",
   "negotiate","coach","operate","execute","prototype","simulate","present","map","classify"
 ];
-
 const BANNED_VERBS = [
   "understand","know","learn","be aware","familiarize","appreciate","grasp","comprehend"
 ];
-
 const systemPrompt = `
 You are an expert instructional designer. Use the provided DOCUMENT EXCERPTS and FORM FIELDS to generate LEARNING OUTCOMES.
 
@@ -55,8 +49,7 @@ Rules you MUST follow:
 1) Grounding — Base outcomes on the DOCUMENT EXCERPTS and the provided goals/constraints. Do not invent facts not present.
 2) Behavioral — Each outcome starts with an observable action verb (no "understand/know").
 3) Specific & targeted — One discrete behavior per outcome (no chained actions).
-4) Measurable — Include a realistic condition and/or criterion (e.g., "within 5 min", "with 90% accuracy",
-   "per the checklist", "without assistance", "in a role-play", "given a scenario").
+4) Measurable — Include a realistic condition/criterion (e.g., "within 5 min", "with 90% accuracy", "per checklist", "without assistance", "in a role-play", "given a scenario").
 5) Clear & concise — 10–18 words; plain language; no jargon.
 
 Prefer verbs from this allowlist when sensible:
@@ -69,8 +62,7 @@ CRITICAL: Respond ONLY as JSON with properties "outcomes" (string[]) and "module
 Each outcome MUST be a single sentence starting with the verb.
 `;
 
-// -------------------- OpenAI generators --------------------
-async function generateWithResponses({ openai, model, systemPrompt, userPayload, numOutcomes, numModules }) {
+async function generateResponses(openai, model, userPayload, numOutcomes, numModules) {
   const resp = await openai.responses.create({
     model,
     temperature: 0.2,
@@ -110,14 +102,12 @@ async function generateWithResponses({ openai, model, systemPrompt, userPayload,
       { role: "user", content: JSON.stringify(userPayload) }
     ]
   });
-
   let draft = {};
-  try { draft = JSON.parse(resp.output_text || "{}"); } catch { draft = {}; }
+  try { draft = JSON.parse(resp.output_text || "{}"); } catch {}
   return draft;
 }
-
-async function generateWithChat({ openai, model, systemPrompt, userPayload }) {
-  const completion = await openai.chat.completions.create({
+async function generateChat(openai, model, userPayload) {
+  const c = await openai.chat.completions.create({
     model,
     temperature: 0.2,
     messages: [
@@ -126,28 +116,21 @@ async function generateWithChat({ openai, model, systemPrompt, userPayload }) {
     ]
   });
   let draft = {};
-  try { draft = JSON.parse(completion.choices?.[0]?.message?.content || "{}"); } catch { draft = {}; }
+  try { draft = JSON.parse(c.choices?.[0]?.message?.content || "{}"); } catch {}
   return draft;
 }
-
-async function tryGenerate({ openai, model, systemPrompt, userPayload, numOutcomes, numModules }) {
-  // Try Responses API first; if it fails, try Chat Completions
+async function tryGenerate(openai, model, userPayload, numOutcomes, numModules) {
   try {
-    const d = await generateWithResponses({ openai, model, systemPrompt, userPayload, numOutcomes, numModules });
-    if (d && Array.isArray(d.outcomes) && d.outcomes.length) return d;
-  } catch (e) {
-    // fall through to chat
-  }
-  const d2 = await generateWithChat({ openai, model, systemPrompt, userPayload });
-  if (d2 && Array.isArray(d2.outcomes) && d2.outcomes.length) return d2;
+    const d = await generateResponses(openai, model, userPayload, numOutcomes, numModules);
+    if (Array.isArray(d?.outcomes) && d.outcomes.length) return d;
+  } catch {}
+  const d2 = await generateChat(openai, model, userPayload);
+  if (Array.isArray(d2?.outcomes) && d2.outcomes.length) return d2;
   throw new Error("model-generation-failed");
 }
-
-// Optional self-heal rewrite for any non-compliant outcomes
-async function rewriteIfNeeded({ openai, model, outcomes, context }) {
+async function rewriteIfNeeded(openai, model, outcomes, context) {
   const lint = lintOutcomes(outcomes);
   if (!hasBlockingIssues(lint)) return { outcomes, lint };
-
   const toFix = lint.map((r, i) => ({ ...r, idx: i })).filter(r => r.issues.length);
   const userPayload = {
     instructions: `Rewrite outcomes to meet ALL criteria:
@@ -159,8 +142,6 @@ Return ONLY a JSON array of strings in the same order as provided.`,
     context,
     outcomesToFix: toFix.map(r => ({ index: r.idx, text: r.text }))
   };
-
-  // Try Responses first, then Chat (same model)
   try {
     const resp = await openai.responses.create({
       model,
@@ -181,7 +162,7 @@ Return ONLY a JSON array of strings in the same order as provided.`,
     });
     return { outcomes: final, lint: lintOutcomes(final) };
   } catch {
-    const completion = await openai.chat.completions.create({
+    const c = await openai.chat.completions.create({
       model,
       temperature: 0.1,
       messages: [
@@ -190,7 +171,7 @@ Return ONLY a JSON array of strings in the same order as provided.`,
       ]
     });
     let rewrites = [];
-    try { rewrites = JSON.parse(completion.choices?.[0]?.message?.content || "[]"); } catch {}
+    try { rewrites = JSON.parse(c.choices?.[0]?.message?.content || "[]"); } catch {}
     const final = [...outcomes];
     toFix.forEach((r, j) => {
       const candidate = rewrites[j];
@@ -200,7 +181,6 @@ Return ONLY a JSON array of strings in the same order as provided.`,
   }
 }
 
-// -------------------- handler --------------------
 export default async function handler(req, res) {
   try {
     if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
@@ -220,66 +200,52 @@ export default async function handler(req, res) {
       files = []
     } = await readJsonBody(req);
 
-    // 1) Extract doc text (never crash if it fails)
+    // Extract doc text — never crash if it fails
     let docsText = "";
     try {
       const texts = await Promise.all(
         (Array.isArray(files) ? files : []).slice(0, 6).map(extractTextFromUrl)
       );
       docsText = capTexts(texts.filter(Boolean));
-    } catch (e) {
-      console.warn("extract docs failed", e);
-    }
+    } catch {}
 
-    // 2) OpenAI client
     const openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
       organization: process.env.OPENAI_ORG,
       project: process.env.OPENAI_PROJECT
     });
+    const preferred = (process.env.OPENAI_MODEL || "gpt-4o").trim();
+    const modelsToTry = Array.from(new Set([preferred, "gpt-4o"]));
 
-    // 3) Build user payload
     const userPayload = {
       form_fields: { organization, summary, audience, constraints, goals, timeline, success_metrics, notes, numOutcomes, numModules },
       document_excerpts: docsText || "(no documents provided)"
     };
 
-    // 4) Try the configured model, then a safe fallback
-    const preferred = (process.env.OPENAI_MODEL || "gpt-4o").trim();
-    const modelsToTry = Array.from(new Set([preferred, "gpt-4o"]));
-
-    let draft = null;
-    let lastErr = null;
+    let draft = null, lastErr = null;
     for (const model of modelsToTry) {
       try {
-        draft = await tryGenerate({ openai, model, systemPrompt, userPayload, numOutcomes, numModules });
-        if (draft) break;
+        draft = await tryGenerate(openai, model, userPayload, numOutcomes, numModules);
+        if (draft) { lastErr = null; break; }
       } catch (e) {
         lastErr = e;
       }
     }
-    if (!draft) {
-      console.error("OpenAI generation failed", lastErr);
-      return sendJson(res, 502, { error: "OpenAI generation failed", detail: safeError(lastErr) });
-    }
+    if (!draft) return sendJson(res, 502, { error: "OpenAI generation failed", detail: safeError(lastErr) });
 
-    // 5) Normalize & lint
     const outcomesRaw = Array.isArray(draft?.outcomes) ? draft.outcomes : [];
     const outcomes = outcomesRaw.map(x => typeof x === "string" ? x.trim() : (x?.text || "").trim());
     const modules = Array.isArray(draft?.modules) ? draft.modules : [];
 
-    const context = { organization, summary, audience, constraints, goals, timeline, success_metrics, notes, files };
-    const { outcomes: healedOutcomes, lint } = await rewriteIfNeeded({
+    const { outcomes: healedOutcomes, lint } = await rewriteIfNeeded(
       openai,
-      model: modelsToTry.find(Boolean) || "gpt-4o",
+      modelsToTry[0],
       outcomes,
-      context
-    });
+      { organization, summary, audience, constraints, goals, timeline, success_metrics, notes, files }
+    );
 
-    // 6) Respond in the shape your UI expects
     return sendJson(res, 200, { draft: { outcomes: healedOutcomes, modules }, lint });
   } catch (err) {
-    console.error("draft error", err);
     return sendJson(res, 500, { error: "Failed to draft outcomes/modules", detail: safeError(err) });
   }
 }
