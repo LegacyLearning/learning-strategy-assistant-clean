@@ -1,6 +1,6 @@
 // api/draft.js
-// Hardened: never crashes; returns detailed error JSON on failure.
-// Shape: { draft: { outcomes, modules }, lint }
+// Grounded generation + strict outcome rules + lint & auto-rewrite.
+// Responds: { draft: { outcomes, modules }, lint, grounding }
 
 export const config = { runtime: "nodejs18.x" };
 
@@ -8,6 +8,7 @@ import OpenAI from "openai";
 import { lintOutcomes, hasBlockingIssues } from "../lib/outcomes.js";
 import { extractTextFromUrl, capTexts } from "../lib/extract.js";
 
+// ---------- utils ----------
 async function readJsonBody(req) {
   try {
     if (req.body && typeof req.body === "object") return req.body;
@@ -34,6 +35,7 @@ function safeError(err) {
   };
 }
 
+// ---------- prompts ----------
 const PREFERRED_VERBS = [
   "demonstrate","perform","apply","analyze","diagnose","configure","compose","facilitate",
   "evaluate","prioritize","draft","produce","document","calibrate","troubleshoot",
@@ -42,26 +44,24 @@ const PREFERRED_VERBS = [
 const BANNED_VERBS = [
   "understand","know","learn","be aware","familiarize","appreciate","grasp","comprehend"
 ];
+
 const systemPrompt = `
-You are an expert instructional designer. Use the provided DOCUMENT EXCERPTS and FORM FIELDS to generate LEARNING OUTCOMES.
+You are an expert instructional designer.
 
-Rules you MUST follow:
-1) Grounding — Base outcomes on the DOCUMENT EXCERPTS and the provided goals/constraints. Do not invent facts not present.
-2) Behavioral — Each outcome starts with an observable action verb (no "understand/know").
-3) Specific & targeted — One discrete behavior per outcome (no chained actions).
-4) Measurable — Include a realistic condition/criterion (e.g., "within 5 min", "with 90% accuracy", "per checklist", "without assistance", "in a role-play", "given a scenario").
-5) Clear & concise — 10–18 words; plain language; no jargon.
+STRICT RULES (do not violate):
+- Ground every outcome on DOCUMENT EXCERPTS and the provided goals/constraints. Do not invent facts.
+- Behavioral: each outcome starts with an observable action verb (never use: ${BANNED_VERBS.join(", ")}).
+- Specific & targeted: one discrete behavior per outcome (no chained actions).
+- Measurable: include a realistic condition and/or criterion ("within 5 min", "with 90% accuracy", "per checklist", "without assistance", "in a role-play", "given a scenario").
+- Clear & concise: 10–18 words; plain language; no jargon.
 
-Prefer verbs from this allowlist when sensible:
-${PREFERRED_VERBS.join(", ")}
+Prefer verbs from this allowlist when sensible: ${PREFERRED_VERBS.join(", ")}.
 
-Never use these banned verbs (or close variants):
-${BANNED_VERBS.join(", ")}
-
-CRITICAL: Respond ONLY as JSON with properties "outcomes" (string[]) and "modules" (array of {title, description?}).
-Each outcome MUST be a single sentence starting with the verb.
+Output format: JSON ONLY with "outcomes": string[] and "modules": [{ "title": string, "description"?: string }].
+Each outcome is a single sentence beginning with the verb.
 `;
 
+// ---------- generation helpers ----------
 async function generateResponses(openai, model, userPayload, numOutcomes, numModules) {
   const resp = await openai.responses.create({
     model,
@@ -128,9 +128,11 @@ async function tryGenerate(openai, model, userPayload, numOutcomes, numModules) 
   if (Array.isArray(d2?.outcomes) && d2.outcomes.length) return d2;
   throw new Error("model-generation-failed");
 }
+
 async function rewriteIfNeeded(openai, model, outcomes, context) {
   const lint = lintOutcomes(outcomes);
   if (!hasBlockingIssues(lint)) return { outcomes, lint };
+
   const toFix = lint.map((r, i) => ({ ...r, idx: i })).filter(r => r.issues.length);
   const userPayload = {
     instructions: `Rewrite outcomes to meet ALL criteria:
@@ -142,6 +144,7 @@ Return ONLY a JSON array of strings in the same order as provided.`,
     context,
     outcomesToFix: toFix.map(r => ({ index: r.idx, text: r.text }))
   };
+
   try {
     const resp = await openai.responses.create({
       model,
@@ -181,34 +184,31 @@ Return ONLY a JSON array of strings in the same order as provided.`,
   }
 }
 
+// ---------- handler ----------
 export default async function handler(req, res) {
   try {
     if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
     if (!process.env.OPENAI_API_KEY) return sendJson(res, 500, { error: "OPENAI_API_KEY not set" });
 
     const {
-      organization,
-      summary,
-      audience,
-      constraints,
-      goals,
-      timeline,
-      success_metrics,
-      notes,
-      numOutcomes,
-      numModules,
-      files = []
+      organization, summary, audience, constraints, goals, timeline,
+      success_metrics, notes, numOutcomes, numModules, files = []
     } = await readJsonBody(req);
 
-    // Extract doc text — never crash if it fails
-    let docsText = "";
+    // 1) Extract from uploaded docs (PDF/DOCX supported when ENABLE_PDF_PARSE=1)
+    let texts = [];
     try {
-      const texts = await Promise.all(
-        (Array.isArray(files) ? files : []).slice(0, 6).map(extractTextFromUrl)
-      );
-      docsText = capTexts(texts.filter(Boolean));
+      const slice = (Array.isArray(files) ? files : []).slice(0, 6);
+      texts = await Promise.all(slice.map(extractTextFromUrl));
     } catch {}
+    const nonEmpty = texts.filter(Boolean);
+    const docsText = capTexts(nonEmpty);
+    const grounding = {
+      docCount: nonEmpty.length,
+      usedCharCount: docsText.length
+    };
 
+    // 2) OpenAI client
     const openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
       organization: process.env.OPENAI_ORG,
@@ -217,34 +217,37 @@ export default async function handler(req, res) {
     const preferred = (process.env.OPENAI_MODEL || "gpt-4o").trim();
     const modelsToTry = Array.from(new Set([preferred, "gpt-4o"]));
 
+    // 3) Build user payload (includes document excerpts)
     const userPayload = {
-      form_fields: { organization, summary, audience, constraints, goals, timeline, success_metrics, notes, numOutcomes, numModules },
+      form_fields: {
+        organization, summary, audience, constraints, goals, timeline,
+        success_metrics, notes, numOutcomes, numModules
+      },
       document_excerpts: docsText || "(no documents provided)"
     };
 
+    // 4) Generate (Responses → Chat fallback)
     let draft = null, lastErr = null;
     for (const model of modelsToTry) {
       try {
         draft = await tryGenerate(openai, model, userPayload, numOutcomes, numModules);
         if (draft) { lastErr = null; break; }
-      } catch (e) {
-        lastErr = e;
-      }
+      } catch (e) { lastErr = e; }
     }
     if (!draft) return sendJson(res, 502, { error: "OpenAI generation failed", detail: safeError(lastErr) });
 
+    // 5) Normalize + enforce rules with lint & auto-rewrite
     const outcomesRaw = Array.isArray(draft?.outcomes) ? draft.outcomes : [];
     const outcomes = outcomesRaw.map(x => typeof x === "string" ? x.trim() : (x?.text || "").trim());
     const modules = Array.isArray(draft?.modules) ? draft.modules : [];
 
     const { outcomes: healedOutcomes, lint } = await rewriteIfNeeded(
-      openai,
-      modelsToTry[0],
-      outcomes,
+      openai, modelsToTry[0], outcomes,
       { organization, summary, audience, constraints, goals, timeline, success_metrics, notes, files }
     );
 
-    return sendJson(res, 200, { draft: { outcomes: healedOutcomes, modules }, lint });
+    // 6) Respond
+    return sendJson(res, 200, { draft: { outcomes: healedOutcomes, modules }, lint, grounding });
   } catch (err) {
     return sendJson(res, 500, { error: "Failed to draft outcomes/modules", detail: safeError(err) });
   }
