@@ -1,114 +1,203 @@
 // api/draft.js
-// POST -> generates outcomes/modules using OpenAI and returns JSON
-//
-// Body shape (examples):
-// {
-//   "organization": "Acme Corp",
-//   "summary": "Need onboarding for new CSMs...",
-//   "audience": "New Customer Success Managers",
-//   "constraints": "60 minutes per module, remote-first",
-//   "numOutcomes": 3,
-//   "numModules": 4
-// }
-//
-// Response:
-// { ok: true, draft: { outcomes: [...], modules: [...] } }
+// Enforces outcomes that are Behavioral, Specific, Measurable, and Concise.
+// Returns: { outcomes: string[], modules: {title, description?}[], lint: {text, issues[]}[] }
 
-export const config = { api: { bodyParser: { sizeLimit: '2mb' } } };
+import OpenAI from "openai";
+import { lintOutcomes, hasBlockingIssues } from "../lib/outcomes.js";
+
+// -- Helpers -----------------------------------------------------------------
+async function readJsonBody(req) {
+  // Works on Vercel/Node APIs whether req.body is populated or not
+  if (req.body && typeof req.body === "object") return req.body;
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  const str = Buffer.concat(chunks).toString("utf8");
+  try { return str ? JSON.parse(str) : {}; } catch { return {}; }
+}
+
+function sendJson(res, status, obj) {
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify(obj));
+}
+
+// Allowlisted / banned verbs used in the prompt for stricter style
+const PREFERRED_VERBS = [
+  "demonstrate","perform","apply","analyze","diagnose","configure","compose","facilitate",
+  "evaluate","prioritize","draft","produce","document","calibrate","troubleshoot",
+  "negotiate","coach","operate","execute","prototype","simulate","present","map","classify"
+];
+
+const BANNED_VERBS = [
+  "understand","know","learn","be aware","familiarize","appreciate","grasp","comprehend"
+];
+
+// Tight system prompt: behavioral, single-skill, measurable, concise (10–18 words)
+const systemPrompt = `
+You are an expert instructional designer. Generate LEARNING OUTCOMES that strictly meet ALL criteria:
+
+1) Behavioral — start with a clear, observable action verb (no "understand/know").
+2) Specific & targeted — one discrete behavior per outcome (no chained actions).
+3) Measurable — include a realistic condition and/or criterion (e.g., "within 5 min", "with 90% accuracy",
+   "per the checklist", "without assistance", "in a role-play", "given a scenario").
+4) Clear & concise — 10–18 words; plain language; no jargon.
+
+Prefer action verbs from this allowlist when sensible:
+${PREFERRED_VERBS.join(", ")}
+
+Never use these banned verbs (or close variants):
+${BANNED_VERBS.join(", ")}
+
+CRITICAL: Respond ONLY as JSON with properties "outcomes" and "modules".
+Each outcome MUST be a single sentence starting with the verb.
+`;
+
+// Optional self-heal: rewrite non-compliant outcomes in-place
+async function rewriteIfNeeded({ openai, outcomes, context }) {
+  const lint = lintOutcomes(outcomes);
+  if (!hasBlockingIssues(lint)) return { outcomes, lint }; // already good enough
+
+  const toFix = lint
+    .map((r, i) => ({ ...r, idx: i }))
+    .filter(r => r.issues.length);
+
+  const userPayload = {
+    instructions: `Rewrite outcomes to meet ALL criteria:
+- Start with an observable action verb (no banned verbs).
+- One behavior only.
+- Include a measurable condition/criterion.
+- 10–18 words, plain language.
+Return ONLY a JSON array of strings in the same order as provided.`,
+    context,
+    outcomesToFix: toFix.map(r => ({ index: r.idx, text: r.text }))
+  };
+
+  const resp = await openai.responses.create({
+    model: process.env.OPENAI_MODEL || "gpt-4o",
+    temperature: 0.1,
+    response_format: { type: "json_object" },
+    input: [
+      { role: "system", content: "You rewrite outcomes to meet strict criteria. Respond with JSON only." },
+      { role: "user", content: JSON.stringify(userPayload) }
+    ]
+  });
+
+  let payload = {};
+  try { payload = JSON.parse(resp.output_text || "{}"); } catch {}
+  const rewrites = Array.isArray(payload) ? payload : payload?.outcomes || [];
+
+  const final = [...outcomes];
+  toFix.forEach((r, j) => {
+    const candidate = rewrites[j];
+    if (typeof candidate === "string" && candidate.trim()) final[r.idx] = candidate.trim();
+  });
+
+  return { outcomes: final, lint: lintOutcomes(final) };
+}
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'method_not_allowed' });
-  }
-
   try {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: 'missing_OPENAI_API_KEY' });
+    if (req.method !== "POST") {
+      return sendJson(res, 405, { error: "Method not allowed" });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return sendJson(res, 500, { error: "OPENAI_API_KEY not set" });
     }
 
     const {
-      organization = '',
-      summary = '',
-      audience = '',
-      constraints = '',
-      numOutcomes = 3,
-      numModules = 4
-    } = req.body || {};
+      organization,
+      summary,
+      audience,
+      constraints,
+      goals,
+      timeline,
+      success_metrics,
+      notes,
+      numOutcomes,
+      numModules
+    } = await readJsonBody(req);
 
-    const sys = [
-      'You are an expert instructional designer.',
-      'Return STRICT JSON only (no markdown, no prose).',
-      'JSON shape:',
-      '{ "outcomes":[{"title":"","description":"","behaviors":[]}],',
-      '  "modules":[{"title":"","objective":"","activities":[]}]}',
-      'Limit to clear, concise bullets and plain language.',
-      'Behaviors should be observable and measurable.',
-      'Activities should be practical and tied to objectives.'
-    ].join(' ');
-
-    const user = [
-      `Organization: ${organization || 'N/A'}`,
-      audience ? `Audience: ${audience}` : '',
-      constraints ? `Constraints: ${constraints}` : '',
-      summary ? `Summary: ${summary}` : '',
-      `Number of outcomes: ${Number(numOutcomes) || 3}`,
-      `Number of modules: ${Number(numModules) || 4}`,
-      '',
-      'Please produce the JSON now.'
-    ].filter(Boolean).join('\n');
-
-    // Call OpenAI Chat Completions
-    const r = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'authorization': `Bearer ${apiKey}`,
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        temperature: 0.4,
-        messages: [
-          { role: 'system', content: sys },
-          { role: 'user', content: user }
-        ]
-        // If your account supports it, you can uncomment the next line
-        // to hard-enforce JSON output:
-        // , response_format: { type: 'json_object' }
-      })
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      organization: process.env.OPENAI_ORG,
+      project: process.env.OPENAI_PROJECT
     });
 
-    if (!r.ok) {
-      const text = await r.text().catch(() => String(r.status));
-      return res.status(500).json({ error: 'openai_error', detail: text });
-    }
+    const userPrompt = {
+      organization, summary, audience, constraints, goals, timeline, success_metrics, notes,
+      numOutcomes, numModules
+    };
 
-    const data = await r.json();
-    const content = data?.choices?.[0]?.message?.content || '';
+    // Primary generation with JSON Schema guardrails
+    const resp = await openai.responses.create({
+      model: process.env.OPENAI_MODEL || "gpt-4o",
+      temperature: 0.2,
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "learning_strategy",
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              outcomes: {
+                type: "array",
+                minItems: Math.max(1, Number(numOutcomes) || 5),
+                items: { type: "string", maxLength: 180 }
+              },
+              modules: {
+                type: "array",
+                minItems: Math.max(1, Number(numModules) || 4),
+                items: {
+                  type: "object",
+                  required: ["title"],
+                  additionalProperties: false,
+                  properties: {
+                    title: { type: "string", maxLength: 120 },
+                    description: { type: "string", maxLength: 400 }
+                  }
+                }
+              }
+            },
+            required: ["outcomes", "modules"]
+          }
+        }
+      },
+      input: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: JSON.stringify(userPrompt) }
+      ]
+    });
 
-    let draft;
+    let draft = {};
     try {
-      draft = JSON.parse(content);
+      draft = JSON.parse(resp.output_text || "{}");
     } catch {
-      // Soft-recover: try to extract JSON-looking part
-      const m = content.match(/\{[\s\S]*\}$/);
-      if (m) {
-        try { draft = JSON.parse(m[0]); } catch {}
-      }
+      draft = { outcomes: [], modules: [] };
     }
 
-    // Final guard
-    if (!draft || typeof draft !== 'object') {
-      return res.status(500).json({ error: 'parse_error', raw: content?.slice?.(0, 4000) });
-    }
+    // Normalize to strings (preserve your data shape)
+    const outcomes = (draft.outcomes || []).map(x =>
+      typeof x === "string" ? x.trim() : (x?.text || "").trim()
+    );
+    const modules = Array.isArray(draft.modules) ? draft.modules : [];
 
-    // Normalize minimal shape
-    draft.outcomes = Array.isArray(draft.outcomes) ? draft.outcomes : [];
-    draft.modules  = Array.isArray(draft.modules)  ? draft.modules  : [];
+    // Lint + optional self-heal pass
+    const context = { organization, summary, audience, constraints, goals, timeline, success_metrics, notes };
+    const { outcomes: healedOutcomes, lint } = await rewriteIfNeeded({
+      openai,
+      outcomes,
+      context
+    });
 
-    return res.status(200).json({ ok: true, draft });
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({ error: 'draft_failed' });
+    return sendJson(res, 200, {
+      outcomes: healedOutcomes,
+      modules,
+      lint // non-breaking extra you can show in UI if desired
+    });
+  } catch (err) {
+    console.error("draft error", err);
+    return sendJson(res, 500, { error: "Failed to draft outcomes/modules" });
   }
 }
