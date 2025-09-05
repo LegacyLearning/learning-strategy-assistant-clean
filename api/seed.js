@@ -31,10 +31,9 @@ export default async function handler(req, res) {
     const { put } = await import('@vercel/blob');
     const pathname = `submissions/${id}.json`;
     await put(pathname, JSON.stringify(record, null, 2), {
-      access: 'private',
+      access: 'public',                 // 👈 change: public (no token needed)
       contentType: 'application/json',
       addRandomSuffix: false
-      // no token param needed when Blob is connected to this project
     });
 
     return res.status(200).json({ ok: true, id, path: pathname });
