@@ -77,14 +77,14 @@
           <label for="summary">Summary</label>
           <textarea id="summary" placeholder="Brief overview of the learning need or context…"></textarea>
 
-          <!-- AI Designer controls -->
+          <!-- AI Designer controls (also saved now) -->
           <div class="row3">
             <div>
-              <label for="audience">Audience <span class="small">(optional)</span></label>
+              <label for="audience">Audience</label>
               <input id="audience" placeholder="e.g., New Customer Success Managers" />
             </div>
             <div>
-              <label for="constraints">Constraints <span class="small">(optional)</span></label>
+              <label for="constraints">Constraints</label>
               <input id="constraints" placeholder="e.g., 60-min modules, remote-first" />
             </div>
             <div>
@@ -96,6 +96,23 @@
               <div class="small" style="margin-top:4px">#Outcomes · #Modules</div>
             </div>
           </div>
+
+          <div class="row">
+            <div>
+              <label for="goals">Goals <span class="small">(bullets or lines)</span></label>
+              <textarea id="goals" placeholder="What success looks like…&#10;Goal 1&#10;Goal 2"></textarea>
+            </div>
+            <div>
+              <label for="timeline">Timeline</label>
+              <textarea id="timeline" placeholder="Key dates, phases, delivery windows…"></textarea>
+            </div>
+          </div>
+
+          <label for="metrics">Success Metrics <span class="small">(bullets or lines)</span></label>
+          <textarea id="metrics" placeholder="How we’ll measure impact…&#10;Metric 1&#10;Metric 2"></textarea>
+
+          <label for="notes">Notes</label>
+          <textarea id="notes" placeholder="Anything else…"></textarea>
 
           <div class="btns">
             <button type="button" id="aiBtn">Launch AI Instructional Designer</button>
@@ -141,19 +158,13 @@
     </main>
 
     <script>
-      // ---------- helpers ----------
       const $ = (id)=>document.getElementById(id);
       const setMsg = (t,bad=false)=>{ const m=$('msg'); m.textContent=t; m.className='msg'+(bad?' bad':''); };
       function fmtSize(n){ if(n<1024) return n+' B'; if(n<1024*1024) return (n/1024).toFixed(1)+' KB'; return (n/1024/1024).toFixed(1)+' MB'; }
 
-      // ---------- state ----------
-      const state = {
-        files: [],          // [{ url, name, size }]
-        outcomes: [],       // [{title, description, behaviors:[]}]
-        modules: []         // [{title, objective, activities:[]}]
-      };
+      const state = { files: [], outcomes: [], modules: [] };
 
-      // ---------- uploader ----------
+      // Uploader
       function showFiles(){
         const wrap = $('files');
         if(!state.files.length){ wrap.innerHTML = ''; return; }
@@ -199,26 +210,19 @@
       function handleFiles(files){
         setMsg('Uploading '+files.length+' file(s)…');
         const list = Array.from(files || []);
-        (async ()=>{
-          for(const f of list) await uploadOne(f);
-          setMsg('Uploads complete.');
-        })();
+        (async ()=>{ for(const f of list) await uploadOne(f); setMsg('Uploads complete.'); })();
       }
-
       function setupDragAndDrop(){
         const box = $('drop');
         box.addEventListener('dragover', (e)=>{ e.preventDefault(); box.classList.add('drag'); });
         box.addEventListener('dragleave', ()=> box.classList.remove('drag'));
         box.addEventListener('drop', (e)=>{
-          e.preventDefault();
-          box.classList.remove('drag');
-          if(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length){
-            handleFiles(e.dataTransfer.files);
-          }
+          e.preventDefault(); box.classList.remove('drag');
+          if(e.dataTransfer?.files?.length){ handleFiles(e.dataTransfer.files); }
         });
       }
 
-      // ---------- Outcomes/Modules editors ----------
+      // Editors
       function renderOutcomes(){
         const wrap = $('outcomesWrap');
         if(!state.outcomes.length){ wrap.innerHTML = '<div class="small">No outcomes yet. Click “+ Add outcome” or use the AI Designer.</div>'; return; }
@@ -253,32 +257,24 @@
       }
       window.removeOutcome = (i)=>{ state.outcomes.splice(i,1); renderOutcomes(); };
       window.removeModule  = (i)=>{ state.modules.splice(i,1);  renderModules();  };
-
       function addOutcome(){ state.outcomes.push({ title:'', description:'', behaviors:[] }); renderOutcomes(); }
       function addModule(){  state.modules.push({ title:'', objective:'', activities:[] });  renderModules();  }
-
       function readEditorsIntoState(){
-        // Outcomes
         const outs = Array.from(document.querySelectorAll('.outcome'));
-        state.outcomes = outs.map(card => {
-          const title = card.querySelector('.o-title').value.trim();
-          const description = card.querySelector('.o-desc').value.trim();
-          const behaviors = card.querySelector('.o-beh').value
-            .split('\n').map(s=>s.trim()).filter(Boolean);
-          return { title, description, behaviors };
-        });
-        // Modules
+        state.outcomes = outs.map(card => ({
+          title: card.querySelector('.o-title').value.trim(),
+          description: card.querySelector('.o-desc').value.trim(),
+          behaviors: card.querySelector('.o-beh').value.split('\n').map(s=>s.trim()).filter(Boolean)
+        }));
         const mods = Array.from(document.querySelectorAll('.module'));
-        state.modules = mods.map(card => {
-          const title = card.querySelector('.m-title').value.trim();
-          const objective = card.querySelector('.m-obj').value.trim();
-          const activities = card.querySelector('.m-act').value
-            .split('\n').map(s=>s.trim()).filter(Boolean);
-          return { title, objective, activities };
-        });
+        state.modules = mods.map(card => ({
+          title: card.querySelector('.m-title').value.trim(),
+          objective: card.querySelector('.m-obj').value.trim(),
+          activities: card.querySelector('.m-act').value.split('\n').map(s=>s.trim()).filter(Boolean)
+        }));
       }
 
-      // ---------- AI Designer ----------
+      // AI
       async function launchAI(){
         const organization = $('org').value.trim();
         const summary = $('summary').value.trim();
@@ -286,11 +282,7 @@
         const constraints = $('constraints').value.trim();
         const numOutcomes = parseInt($('numOutcomes').value || '3', 10);
         const numModules  = parseInt($('numModules').value  || '4', 10);
-
-        if(!organization && !summary){
-          setMsg('Enter at least Organization or Summary for better AI results.', true);
-          return;
-        }
+        if(!organization && !summary){ setMsg('Enter at least Organization or Summary for better AI results.', true); return; }
 
         try{
           $('aiBtn').disabled = true;
@@ -300,47 +292,37 @@
             headers:{ 'content-type':'application/json' },
             body: JSON.stringify({ organization, summary, audience, constraints, numOutcomes, numModules })
           });
-          if(!res.ok){
-            const t = await res.text().catch(()=>res.statusText);
-            setMsg('AI error: ' + t, true);
-            $('aiBtn').disabled = false;
-            return;
-          }
+          if(!res.ok){ setMsg('AI error: ' + (await res.text().catch(()=>res.statusText)), true); return; }
           const data = await res.json();
           const d = data?.draft || {};
           state.outcomes = Array.isArray(d.outcomes) ? d.outcomes : [];
           state.modules  = Array.isArray(d.modules) ? d.modules  : [];
-          renderOutcomes();
-          renderModules();
+          renderOutcomes(); renderModules();
           setMsg('Draft loaded. Review and edit as needed, then Submit.');
-        }catch(e){
-          setMsg('AI request failed: ' + (e?.message || e), true);
-        }finally{
-          $('aiBtn').disabled = false;
-        }
+        }catch(e){ setMsg('AI request failed: ' + (e?.message||e), true); }
+        finally{ $('aiBtn').disabled = false; }
       }
 
-      // ---------- submit ----------
+      // Submit
       async function submitForm(e){
         e.preventDefault();
         const org = $('org').value.trim();
-        const name = $('name').value.trim();
-        const email = $('email').value.trim();   // now totally free-form (or blank)
-        const summary = $('summary').value.trim();
         if(!org){ setMsg('Organization is required.', true); $('org').focus(); return; }
-
-        // sync edits to state
-        readEditorsIntoState();
-        const files = state.files.map(f=>f.url);
 
         const payload = {
           organization: org,
-          contact_name: name,
-          contact_email: email,    // saved as-is
-          summary,
-          outcomes: state.outcomes,
+          contact_name: $('name').value.trim(),
+          contact_email: $('email').value.trim(),  // free-form or blank
+          summary: $('summary').value.trim(),
+          audience: $('audience').value.trim(),
+          constraints: $('constraints').value.trim(),
+          goals: $('goals').value.trim(),
+          timeline: $('timeline').value.trim(),
+          success_metrics: $('metrics').value.trim(),
+          notes: $('notes').value.trim(),
+          outcomes: (readEditorsIntoState(), state.outcomes),
           modules: state.modules,
-          files
+          files: state.files.map(f=>f.url)
         };
 
         try{
@@ -351,53 +333,25 @@
             headers:{ 'content-type':'application/json' },
             body: JSON.stringify(payload)
           });
-          if(!res.ok){
-            const t = await res.text().catch(()=>res.statusText);
-            setMsg('Submit failed: ' + t, true);
-            $('submitBtn').disabled = false;
-            return;
-          }
+          if(!res.ok){ setMsg('Submit failed: ' + (await res.text().catch(()=>res.statusText)), true); return; }
           const data = await res.json();
           setMsg(`Saved! ID: ${data.id}.  View it in Admin →`, false);
-          const a = document.createElement('a');
-          a.textContent = 'Open Admin';
-          a.href = '/admin.html';
-          a.target = '_blank';
-          a.className = 'link';
-          $('msg').appendChild(document.createTextNode(' '));
-          $('msg').appendChild(a);
-
-          // reset light
-          $('f').reset();
-          state.files = [];
-          state.outcomes = [];
-          state.modules = [];
-          showFiles(); renderOutcomes(); renderModules();
-        }catch(e){
-          setMsg('Submit error: ' + (e?.message || e), true);
-        }finally{
-          $('submitBtn').disabled = false;
-        }
+          const a = document.createElement('a'); a.textContent='Open Admin'; a.href='/admin.html'; a.target='_blank'; a.className='link';
+          $('msg').appendChild(document.createTextNode(' ')); $('msg').appendChild(a);
+          $('f').reset(); state.files=[]; state.outcomes=[]; state.modules=[]; showFiles(); renderOutcomes(); renderModules();
+        }catch(e){ setMsg('Submit error: ' + (e?.message||e), true); }
+        finally{ $('submitBtn').disabled = false; }
       }
 
-      // ---------- init ----------
       window.addEventListener('DOMContentLoaded', ()=>{
-        // uploader
         $('chooseBtn').addEventListener('click', ()=> $('fileInput').click());
         $('fileInput').addEventListener('change', (e)=> handleFiles(e.target.files));
         setupDragAndDrop();
-
-        // AI + editors
         $('aiBtn').addEventListener('click', launchAI);
         $('addOutcomeBtn').addEventListener('click', ()=>{ addOutcome(); setMsg('Added an outcome.'); });
         $('addModuleBtn').addEventListener('click', ()=>{ addModule(); setMsg('Added a module.'); });
-
-        // submit
         $('f').addEventListener('submit', submitForm);
-
-        // initial renders
-        renderOutcomes();
-        renderModules();
+        renderOutcomes(); renderModules();
       });
     </script>
   </body>
