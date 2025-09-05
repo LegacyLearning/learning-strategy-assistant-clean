@@ -1,7 +1,7 @@
 // api/draft.js
 // Generates outcomes/modules that are Behavioral, Specific, Measurable, Concise.
 // Grounds on uploaded document text when provided.
-// Returns shape expected by your current index.html: { draft: { outcomes, modules }, lint? }
+// Returns shape your UI expects: { draft: { outcomes, modules }, lint? }
 
 export const config = { runtime: "nodejs18.x" };
 
@@ -9,7 +9,7 @@ import OpenAI from "openai";
 import { lintOutcomes, hasBlockingIssues } from "../lib/outcomes.js";
 import { extractTextFromUrl, capTexts } from "../lib/extract.js";
 
-// ---------- helpers ----------
+// -------------------- helpers --------------------
 async function readJsonBody(req) {
   try {
     if (req.body && typeof req.body === "object") return req.body;
@@ -28,6 +28,16 @@ function sendJson(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
+function safeError(err) {
+  return {
+    name: err?.name,
+    status: err?.status || err?.response?.status,
+    code: err?.code,
+    message: err?.message,
+    upstream: err?.response?.data?.error?.message
+  };
+}
+
 const PREFERRED_VERBS = [
   "demonstrate","perform","apply","analyze","diagnose","configure","compose","facilitate",
   "evaluate","prioritize","draft","produce","document","calibrate","troubleshoot",
@@ -38,7 +48,6 @@ const BANNED_VERBS = [
   "understand","know","learn","be aware","familiarize","appreciate","grasp","comprehend"
 ];
 
-// System prompt emphasizes *grounding in documents* + outcome criteria
 const systemPrompt = `
 You are an expert instructional designer. Use the provided DOCUMENT EXCERPTS and FORM FIELDS to generate LEARNING OUTCOMES.
 
@@ -60,6 +69,7 @@ CRITICAL: Respond ONLY as JSON with properties "outcomes" (string[]) and "module
 Each outcome MUST be a single sentence starting with the verb.
 `;
 
+// -------------------- OpenAI generators --------------------
 async function generateWithResponses({ openai, model, systemPrompt, userPayload, numOutcomes, numModules }) {
   const resp = await openai.responses.create({
     model,
@@ -116,10 +126,21 @@ async function generateWithChat({ openai, model, systemPrompt, userPayload }) {
     ]
   });
   let draft = {};
-  try {
-    draft = JSON.parse(completion.choices?.[0]?.message?.content || "{}");
-  } catch { draft = {}; }
+  try { draft = JSON.parse(completion.choices?.[0]?.message?.content || "{}"); } catch { draft = {}; }
   return draft;
+}
+
+async function tryGenerate({ openai, model, systemPrompt, userPayload, numOutcomes, numModules }) {
+  // Try Responses API first; if it fails, try Chat Completions
+  try {
+    const d = await generateWithResponses({ openai, model, systemPrompt, userPayload, numOutcomes, numModules });
+    if (d && Array.isArray(d.outcomes) && d.outcomes.length) return d;
+  } catch (e) {
+    // fall through to chat
+  }
+  const d2 = await generateWithChat({ openai, model, systemPrompt, userPayload });
+  if (d2 && Array.isArray(d2.outcomes) && d2.outcomes.length) return d2;
+  throw new Error("model-generation-failed");
 }
 
 // Optional self-heal rewrite for any non-compliant outcomes
@@ -139,7 +160,7 @@ Return ONLY a JSON array of strings in the same order as provided.`,
     outcomesToFix: toFix.map(r => ({ index: r.idx, text: r.text }))
   };
 
-  // Try Responses first, then Chat
+  // Try Responses first, then Chat (same model)
   try {
     const resp = await openai.responses.create({
       model,
@@ -179,6 +200,7 @@ Return ONLY a JSON array of strings in the same order as provided.`,
   }
 }
 
+// -------------------- handler --------------------
 export default async function handler(req, res) {
   try {
     if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
@@ -198,7 +220,7 @@ export default async function handler(req, res) {
       files = []
     } = await readJsonBody(req);
 
-    // 1) Try to extract doc text (non-blocking on failure)
+    // 1) Extract doc text (never crash if it fails)
     let docsText = "";
     try {
       const texts = await Promise.all(
@@ -209,13 +231,12 @@ export default async function handler(req, res) {
       console.warn("extract docs failed", e);
     }
 
-    // 2) Prepare OpenAI client
+    // 2) OpenAI client
     const openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
       organization: process.env.OPENAI_ORG,
       project: process.env.OPENAI_PROJECT
     });
-    const model = process.env.OPENAI_MODEL || "gpt-4o";
 
     // 3) Build user payload
     const userPayload = {
@@ -223,31 +244,42 @@ export default async function handler(req, res) {
       document_excerpts: docsText || "(no documents provided)"
     };
 
-    // 4) Generate (Responses API first; fallback to Chat)
-    let draft = {};
-    try {
-      draft = await generateWithResponses({ openai, model, systemPrompt, userPayload, numOutcomes, numModules });
-      if (!draft || !draft.outcomes) throw new Error("responses-empty");
-    } catch {
-      draft = await generateWithChat({ openai, model, systemPrompt, userPayload });
+    // 4) Try the configured model, then a safe fallback
+    const preferred = (process.env.OPENAI_MODEL || "gpt-4o").trim();
+    const modelsToTry = Array.from(new Set([preferred, "gpt-4o"]));
+
+    let draft = null;
+    let lastErr = null;
+    for (const model of modelsToTry) {
+      try {
+        draft = await tryGenerate({ openai, model, systemPrompt, userPayload, numOutcomes, numModules });
+        if (draft) break;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    if (!draft) {
+      console.error("OpenAI generation failed", lastErr);
+      return sendJson(res, 502, { error: "OpenAI generation failed", detail: safeError(lastErr) });
     }
 
-    // Normalize
+    // 5) Normalize & lint
     const outcomesRaw = Array.isArray(draft?.outcomes) ? draft.outcomes : [];
     const outcomes = outcomesRaw.map(x => typeof x === "string" ? x.trim() : (x?.text || "").trim());
     const modules = Array.isArray(draft?.modules) ? draft.modules : [];
 
-    // Heal & lint
     const context = { organization, summary, audience, constraints, goals, timeline, success_metrics, notes, files };
-    const { outcomes: healedOutcomes, lint } = await rewriteIfNeeded({ openai, model, outcomes, context });
-
-    // IMPORTANT: maintain old response shape your UI expects
-    return sendJson(res, 200, {
-      draft: { outcomes: healedOutcomes, modules },
-      lint
+    const { outcomes: healedOutcomes, lint } = await rewriteIfNeeded({
+      openai,
+      model: modelsToTry.find(Boolean) || "gpt-4o",
+      outcomes,
+      context
     });
+
+    // 6) Respond in the shape your UI expects
+    return sendJson(res, 200, { draft: { outcomes: healedOutcomes, modules }, lint });
   } catch (err) {
     console.error("draft error", err);
-    return sendJson(res, 500, { error: "Failed to draft outcomes/modules" });
+    return sendJson(res, 500, { error: "Failed to draft outcomes/modules", detail: safeError(err) });
   }
 }
