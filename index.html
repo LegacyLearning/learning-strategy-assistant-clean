@@ -8,133 +8,24 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
     <style>
-      :root { --bg:#0b1020; --panel:#121830; --muted:#8a93a6; --text:#e6eaf3; --chip:#1f2a4d; --border:#1c2445 }
+      :root { --bg:#0b1020; --panel:#121830; --muted:#8a93a6; --text:#e6eaf3; --border:#1c2445; --accent:#2b5cff }
       *{box-sizing:border-box}
       body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text)}
       header{display:flex;gap:12px;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border);position:sticky;top:0;background:rgba(11,16,32,.75);backdrop-filter:saturate(120%) blur(8px)}
       h1{font-size:16px;margin:0;font-weight:600;color:#b8c2e0}
-      main{max-width:860px;margin:22px auto;padding:0 18px}
+      main{max-width:900px;margin:22px auto;padding:0 18px}
       .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:18px}
       label{display:block;margin:12px 0 6px 2px;color:#9fb0d8;font-size:13px}
       input,textarea{width:100%;background:#0f1530;border:1px solid #202a52;color:var(--text);padding:10px 12px;border-radius:10px}
       textarea{min-height:120px;resize:vertical}
       .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-      .btns{display:flex;gap:10px;margin-top:14px}
+      .btns{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
       button{background:#1b2350;border:1px solid #2a3566;color:#e6eaf3;padding:10px 14px;border-radius:10px;cursor:pointer}
       button[disabled]{opacity:.6;cursor:not-allowed}
       .msg{margin-top:12px;font:12px ui-monospace, Menlo, monospace;color:#9fb0d8}
       .msg.bad{color:#fca5a5}
       .small{font-size:12px;color:#8a93a6}
       a.link{color:#a6c0ff;text-decoration:none}
-    </style>
-  </head>
-  <body>
-    <header>
-      <h1>Learning Strategy Assistant — Submit</h1>
-    </header>
-    <main>
-      <div class="card">
-        <p class="small">Fill this out and click <b>Submit</b>. Your entry will appear on the <a class="link" href="/admin.html" target="_blank">Admin Dashboard</a>.</p>
 
-        <form id="f">
-          <label for="org">Organization <span class="small">(required)</span></label>
-          <input id="org" placeholder="Acme Corp" required />
-
-          <div class="row">
-            <div>
-              <label for="name">Contact name</label>
-              <input id="name" placeholder="Jordan Lee" />
-            </div>
-            <div>
-              <label for="email">Contact email</label>
-              <input id="email" placeholder="jordan@example.com" />
-            </div>
-          </div>
-
-          <label for="summary">Summary</label>
-          <textarea id="summary" placeholder="Brief overview of the learning need or context…"></textarea>
-
-          <div class="btns">
-            <button id="submitBtn" type="submit">Submit</button>
-            <a class="link" href="/admin.html" target="_blank" style="align-self:center">Open Admin</a>
-          </div>
-        </form>
-
-        <div id="msg" class="msg">Ready.</div>
-      </div>
-    </main>
-
-    <script>
-      const $ = (id)=>document.getElementById(id);
-      const setMsg = (t,bad=false)=>{ const m=$('msg'); m.textContent=t; m.className='msg'+(bad?' bad':''); };
-
-      function validateEmail(v){
-        if(!v) return true;
-        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
-      }
-
-      async function submitForm(e){
-        e.preventDefault();
-        const org = $('org').value.trim();
-        const name = $('name').value.trim();
-        const email = $('email').value.trim();
-        const summary = $('summary').value.trim();
-
-        if(!org){
-          setMsg('Organization is required.', true);
-          $('org').focus();
-          return;
-        }
-        if(email && !validateEmail(email)){
-          setMsg('Please enter a valid email address.', true);
-          $('email').focus();
-          return;
-        }
-
-        const payload = {
-          organization: org,
-          contact_name: name,
-          contact_email: email,
-          summary,
-          outcomes: [],
-          modules: [],
-          files: []
-        };
-
-        try{
-          $('submitBtn').disabled = true;
-          setMsg('Submitting…');
-          const res = await fetch('/api/submit', {
-            method:'POST',
-            headers:{ 'content-type':'application/json' },
-            body: JSON.stringify(payload)
-          });
-          if(!res.ok){
-            const t = await res.text().catch(()=>res.statusText);
-            setMsg('Submit failed: ' + t, true);
-            $('submitBtn').disabled = false;
-            return;
-          }
-          const data = await res.json();
-          setMsg(`Saved! ID: ${data.id}.  View it in Admin →`, false);
-          const a = document.createElement('a');
-          a.textContent = 'Open Admin';
-          a.href = '/admin.html';
-          a.target = '_blank';
-          a.className = 'link';
-          $('msg').appendChild(document.createTextNode(' '));
-          $('msg').appendChild(a);
-          $('f').reset();
-        }catch(e){
-          setMsg('Submit error: ' + (e?.message || e), true);
-        }finally{
-          $('submitBtn').disabled = false;
-        }
-      }
-
-      window.addEventListener('DOMContentLoaded', ()=>{
-        $('f').addEventListener('submit', submitForm);
-      });
-    </script>
-  </body>
-</html>
+      /* Uploader */
+      .drop{margin-top:12px;border:2px dashed #2a3566;bor
