@@ -3,43 +3,154 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Admin — Learning Strategy Assistant (Clean)</title>
+    <title>Admin — Learning Strategy Assistant</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
     <style>
-      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 40px; }
-      .card { padding: 16px 20px; border: 1px solid #cbd5e1; border-radius: 12px; display:inline-block; }
-      .ok { color: #16a34a; }
-      .bad { color: #dc2626; }
-      code { background:#f1f5f9; padding:2px 4px; border-radius:6px; }
+      :root { --bg:#0b1020; --panel:#121830; --muted:#8a93a6; --text:#e6eaf3; --chip:#1f2a4d; }
+      *{box-sizing:border-box}
+      body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text)}
+      header{display:flex;gap:12px;align-items:center;padding:16px 20px;border-bottom:1px solid #1c2445;position:sticky;top:0;background:rgba(11,16,32,.75);backdrop-filter:saturate(120%) blur(8px)}
+      h1{font-size:16px;margin:0;font-weight:600;color:#b8c2e0}
+      .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-left:auto}
+      input,select,button{background:#0f1530;border:1px solid #202a52;color:var(--text);padding:8px 10px;border-radius:10px}
+      input::placeholder{color:#7380a6}
+      button{cursor:pointer}
+      main{max-width:1100px;margin:18px auto;padding:0 18px}
+      table{width:100%;border-collapse:separate;border-spacing:0 10px}
+      th{font-size:12px;color:#94a3c7;text-align:left;font-weight:600;padding:0 10px}
+      td{background:var(--panel);border:1px solid #1c2445;border-radius:12px;padding:12px 10px;vertical-align:top}
+      tr td:first-child{border-top-right-radius:0;border-bottom-right-radius:0}
+      tr td:last-child{border-top-left-radius:0;border-bottom-left-radius:0}
+      .status{font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;display:inline-block}
+      .s-new{background:#17325a;color:#9cc2ff;border:1px solid #244a89}
+      .s-in{background:#2b1f57;color:#d2b8ff;border:1px solid #443187}
+      .s-done{background:#0f3e2a;color:#7ce2aa;border:1px solid #195f40}
+      .actions{display:flex;gap:8px;flex-wrap:wrap}
+      .ghost{background:transparent;border-color:#2a3564}
+      .mono{font-family:ui-monospace, Menlo, monospace; font-size:12px; color:#9fb0d8}
+      a.file{color:#a6c0ff;text-decoration:none}
+      .pager{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:12px}
     </style>
   </head>
   <body>
-    <h1>Admin — Clean</h1>
-    <div class="card">
-      <p>This minimal admin page just verifies your API works.</p>
-      <p>Status: <span id="status">checking…</span></p>
-      <p><a href="/">Back to Home</a> · Try the endpoint directly: <a href="/api/ping" target="_blank"><code>/api/ping</code></a></p>
-    </div>
+    <header>
+      <h1>Admin</h1>
+      <div class="row">
+        <input id="token" type="password" placeholder="ADMIN_TOKEN (leave blank if none)" />
+        <input id="q" placeholder="Search (org, contact, notes)" />
+        <select id="status">
+          <option value="">All statuses</option>
+          <option value="new">New</option>
+          <option value="in_progress">In progress</option>
+          <option value="done">Done</option>
+        </select>
+        <button id="load">Load</button>
+      </div>
+    </header>
+    <main>
+      <table id="tbl">
+        <thead>
+          <tr>
+            <th style="width:24%">Org / Contact</th>
+            <th style="width:34%">Summary</th>
+            <th style="width:20%">Files</th>
+            <th style="width:8%">Status</th>
+            <th style="width:14%">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="pager">
+        <button class="ghost" id="prev">Prev</button>
+        <span id="page" class="mono"></span>
+        <button class="ghost" id="next">Next</button>
+      </div>
+    </main>
 
     <script>
-      (async () => {
-        try {
-          const r = await fetch('/api/ping', { cache: 'no-store' });
-          const ok = r.ok;
-          const el = document.getElementById('status');
-          if (ok) {
-            const j = await r.json();
-            el.textContent = 'API reachable (' + j.time + ')';
-            el.className = 'ok';
-          } else {
-            el.textContent = 'API returned ' + r.status;
-            el.className = 'bad';
-          }
-        } catch (e) {
-          const el = document.getElementById('status');
-          el.textContent = 'Error: ' + (e && e.message ? e.message : e);
-          el.className = 'bad';
-        }
-      })();
+      const state = { page: 1, pageSize: 20, total: 0, items: [] };
+
+      function badge(s){
+        if(s==='done') return '<span class="status s-done">Done</span>';
+        if(s==='in_progress') return '<span class="status s-in">In progress</span>';
+        return '<span class="status s-new">New</span>';
+      }
+      function fileLink(u){ return `<a class="file" href="${u}" target="_blank">${(u||'').split('/').pop()}</a>` }
+
+      function authHeaders() {
+        const token = document.getElementById('token').value.trim();
+        return token ? { 'x-admin-token': token } : {};
+      }
+
+      async function fetchList(){
+        const q = document.getElementById('q').value.trim();
+        const status = document.getElementById('status').value;
+        const url = new URL('/api/admin/submissions', location.origin);
+        url.searchParams.set('page', state.page);
+        url.searchParams.set('pageSize', state.pageSize);
+        if(q) url.searchParams.set('q', q);
+        if(status) url.searchParams.set('status', status);
+
+        const res = await fetch(url, { headers: authHeaders(), cache: 'no-store' });
+        if(!res.ok){ alert('Auth failed or API error'); return; }
+        const data = await res.json();
+        state.total = data.total || 0;
+        state.items = data.items || [];
+        render();
+      }
+
+      async function openOne(id){
+        const url = new URL('/api/admin/submission', location.origin);
+        url.searchParams.set('id', id);
+        const res = await fetch(url, { headers: authHeaders(), cache: 'no-store' });
+        if(!res.ok){ alert('Open failed'); return; }
+        const data = await res.json();
+        const w = window.open('', '_blank');
+        w.document.write('<pre style="white-space:pre-wrap">'+
+          JSON.stringify(data, null, 2)+'</pre>');
+      }
+
+      async function mark(id,status){
+        const res = await fetch('/api/admin/mark', {
+          method:'POST',
+          headers: { 'content-type':'application/json', ...authHeaders() },
+          body: JSON.stringify({ id, status })
+        });
+        if(res.ok){ fetchList(); } else { alert('Mark failed'); }
+      }
+
+      function render(){
+        const rows = document.getElementById('rows');
+        rows.innerHTML = state.items.map(item=>{
+          const files = (item.files||[]).map(fileLink).join('<br/>');
+          const id = item.id || item.key || item._id;
+          return `<tr>
+            <td>
+              <div style="font-weight:600">${item.organization||'—'}</div>
+              <div class="mono">${item.contact_name||'—'} · ${item.contact_email||'—'}</div>
+              <div class="mono">${new Date(item.created_at||item.createdAt||Date.now()).toLocaleString()}</div>
+            </td>
+            <td>${(item.summary||item.notes||'—').slice(0,200)}</td>
+            <td>${files||'—'}</td>
+            <td>${badge(item.status||'new')}</td>
+            <td class="actions">
+              <button class="ghost" onclick="openOne('${id}')">Open</button>
+              <button class="ghost" onclick="mark('${id}','in_progress')">Mark In Progress</button>
+              <button class="ghost" onclick="mark('${id}','done')">Mark Done</button>
+            </td>
+          </tr>`;
+        }).join('');
+        document.getElementById('page').textContent = `Page ${state.page}`;
+      }
+
+      document.getElementById('load').onclick = ()=>{ state.page=1; fetchList(); };
+      document.getElementById('prev').onclick = ()=>{ if(state.page>1){ state.page--; fetchList(); } };
+      document.getElementById('next').onclick = ()=>{ state.page++; fetchList(); };
+
+      // Auto-load once on open
+      fetchList();
     </script>
   </body>
 </html>
