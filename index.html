@@ -54,7 +54,6 @@
           <label for="summary">Summary</label>
           <textarea id="summary" placeholder="Brief overview of the learning need or context…"></textarea>
 
-          <!-- Reserved for later: outcomes/modules UI + 'Launch AI Designer' -->
           <div class="btns">
             <button id="submitBtn" type="submit">Submit</button>
             <a class="link" href="/admin.html" target="_blank" style="align-self:center">Open Admin</a>
@@ -97,8 +96,8 @@
           contact_name: name,
           contact_email: email,
           summary,
-          outcomes: [],   // we’ll add UI for these later
-          modules: [],    // we’ll add UI for these later
+          outcomes: [],
+          modules: [],
           files: []
         };
 
@@ -118,7 +117,6 @@
           }
           const data = await res.json();
           setMsg(`Saved! ID: ${data.id}.  View it in Admin →`, false);
-          // Add a link to admin with gentle highlight
           const a = document.createElement('a');
           a.textContent = 'Open Admin';
           a.href = '/admin.html';
@@ -126,8 +124,6 @@
           a.className = 'link';
           $('msg').appendChild(document.createTextNode(' '));
           $('msg').appendChild(a);
-
-          // Optionally clear form
           $('f').reset();
         }catch(e){
           setMsg('Submit error: ' + (e?.message || e), true);
