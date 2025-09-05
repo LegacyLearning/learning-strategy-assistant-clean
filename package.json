@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@vercel/blob": "^0.23.0"
+    "@vercel/blob": "^0.23.0",
+    "docx": "^9.1.0"
   }
 }
