@@ -20,7 +20,10 @@
       textarea{min-height:120px;resize:vertical}
       .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
       .row3{display:grid;grid-template-columns:2fr 2fr 1fr;gap:12px}
-      .btns{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+      .btns{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:center}
+      .badge{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;border:1px solid #2a3566;background:#11183a;color:#cbd5ff;font-size:12px}
+      .lint{margin-top:8px;font:12px ui-monospace, Menlo, monospace;color:#9fb0d8}
+      .lint.bad{color:#fca5a5}
       button{background:#1b2350;border:1px solid #2a3566;color:#e6eaf3;padding:10px 14px;border-radius:10px;cursor:pointer}
       button[disabled]{opacity:.6;cursor:not-allowed}
       .msg{margin-top:12px;font:12px ui-monospace, Menlo, monospace;color:#9fb0d8}
@@ -77,7 +80,7 @@
           <label for="summary">Summary</label>
           <textarea id="summary" placeholder="Brief overview of the learning need or context…"></textarea>
 
-          <!-- AI Designer controls (also saved now) -->
+          <!-- AI Designer controls -->
           <div class="row3">
             <div>
               <label for="audience">Audience</label>
@@ -97,28 +100,13 @@
             </div>
           </div>
 
-          <div class="row">
-            <div>
-              <label for="goals">Goals <span class="small">(bullets or lines)</span></label>
-              <textarea id="goals" placeholder="What success looks like…&#10;Goal 1&#10;Goal 2"></textarea>
-            </div>
-            <div>
-              <label for="timeline">Timeline</label>
-              <textarea id="timeline" placeholder="Key dates, phases, delivery windows…"></textarea>
-            </div>
-          </div>
-
-          <label for="metrics">Success Metrics <span class="small">(bullets or lines)</span></label>
-          <textarea id="metrics" placeholder="How we’ll measure impact…&#10;Metric 1&#10;Metric 2"></textarea>
-
-          <label for="notes">Notes</label>
-          <textarea id="notes" placeholder="Anything else…"></textarea>
-
           <div class="btns">
             <button type="button" id="aiBtn">Launch AI Instructional Designer</button>
+            <span id="groundingBadge" class="badge" style="display:none"></span>
           </div>
+          <div id="lintMsg" class="lint" style="display:none"></div>
 
-          <!-- BIG uploader -->
+          <!-- Uploader -->
           <div class="uploader-title">
             <b>Files (optional)</b>
             <span class="small">PDF, Word, images, etc.</span>
@@ -274,6 +262,22 @@
         }));
       }
 
+      function showGrounding(grounding){
+        const el = $('groundingBadge');
+        if (!grounding || !Number.isFinite(grounding.docCount)) { el.style.display='none'; return; }
+        el.textContent = `Grounded in ${grounding.docCount} doc${grounding.docCount===1?'':'s'}`;
+        el.style.display = 'inline-flex';
+      }
+      function showLint(lint){
+        const el = $('lintMsg');
+        if (!Array.isArray(lint) || !lint.length) { el.style.display='none'; return; }
+        const problems = lint.filter(r => (r.issues||[]).length).length;
+        if (!problems) { el.style.display='none'; return; }
+        el.textContent = `${problems} outcome(s) needed tweaks to meet Behavioral/Specific/Measurable/Concise rules.`;
+        el.className = 'lint bad';
+        el.style.display = 'block';
+      }
+
       // AI
       async function launchAI(){
         const organization = $('org').value.trim();
@@ -298,6 +302,8 @@
           state.outcomes = Array.isArray(d.outcomes) ? d.outcomes : [];
           state.modules  = Array.isArray(d.modules) ? d.modules  : [];
           renderOutcomes(); renderModules();
+          showGrounding(data?.grounding);
+          showLint(data?.lint);
           setMsg('Draft loaded. Review and edit as needed, then Submit.');
         }catch(e){ setMsg('AI request failed: ' + (e?.message||e), true); }
         finally{ $('aiBtn').disabled = false; }
@@ -312,7 +318,7 @@
         const payload = {
           organization: org,
           contact_name: $('name').value.trim(),
-          contact_email: $('email').value.trim(),  // free-form or blank
+          contact_email: $('email').value.trim(),
           summary: $('summary').value.trim(),
           audience: $('audience').value.trim(),
           constraints: $('constraints').value.trim(),
@@ -355,7 +361,8 @@
       });
     </script>
 
-    <!-- NEW: show "Download .docx" after successful submit -->
+    <!-- shims -->
+    <script src="/draft-grounding-shim.js" defer></script>
     <script src="/download-docx-shim.js" defer></script>
   </body>
 </html>
