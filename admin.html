@@ -121,6 +121,43 @@
         if(res.ok){ fetchList(); } else { alert('Mark failed'); }
       }
 
+      function getFilenameFromDisposition(disposition, fallback){
+        try{
+          if(!disposition) return fallback;
+          const m = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(disposition);
+          if(m && m[1]) return decodeURIComponent(m[1]).replace(/^"+|"+$/g,'');
+        }catch(_){}
+        return fallback;
+      }
+
+      async function downloadDocx(id){
+        try {
+          const res = await fetch(`/api/export?id=${encodeURIComponent(id)}`, {
+            headers: { ...authHeaders() },
+          });
+          if(!res.ok){
+            const t = await res.text().catch(()=>res.statusText);
+            alert('Export failed: ' + t);
+            return;
+          }
+          const blob = await res.blob();
+          const disposition = res.headers.get('Content-Disposition');
+          const fallback = `learning_strategy_${id}.docx`;
+          const filename = getFilenameFromDisposition(disposition, fallback);
+
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+        } catch (e) {
+          alert('Export error: ' + (e?.message || e));
+        }
+      }
+
       function render(){
         const rows = document.getElementById('rows');
         rows.innerHTML = state.items.map(item=>{
@@ -139,6 +176,7 @@
               <button class="ghost" onclick="openOne('${id}')">Open</button>
               <button class="ghost" onclick="mark('${id}','in_progress')">Mark In Progress</button>
               <button class="ghost" onclick="mark('${id}','done')">Mark Done</button>
+              <button onclick="downloadDocx('${id}')">Download .docx</button>
             </td>
           </tr>`;
         }).join('');
