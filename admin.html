@@ -32,6 +32,8 @@
       .mono{font-family:ui-monospace, Menlo, monospace; font-size:12px; color:#9fb0d8}
       a.file{color:#a6c0ff;text-decoration:none}
       .pager{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:12px}
+      .msg{margin:10px 0 0 0;color:#9fb0d8;font:12px ui-monospace,Menlo,monospace}
+      .msg.bad{color:#fca5a5}
     </style>
   </head>
   <body>
@@ -46,10 +48,11 @@
           <option value="in_progress">In progress</option>
           <option value="done">Done</option>
         </select>
-        <button id="load">Load</button>
+        <button id="loadBtn">Load</button>
       </div>
     </header>
     <main>
+      <div id="msg" class="msg">Ready.</div>
       <table id="tbl">
         <thead>
           <tr>
@@ -71,6 +74,8 @@
 
     <script>
       const state = { page: 1, pageSize: 20, total: 0, items: [] };
+      const $ = (id) => document.getElementById(id);
+      const setMsg = (t, bad=false) => { const m=$('msg'); m.textContent=t; m.className='msg'+(bad?' bad':''); };
 
       function badge(s){
         if(s==='done') return '<span class="status s-done">Done</span>';
@@ -80,32 +85,42 @@
       function fileLink(u){ return `<a class="file" href="${u}" target="_blank">${(u||'').split('/').pop()}</a>` }
 
       function authHeaders() {
-        const token = document.getElementById('token').value.trim();
+        const token = $('token').value.trim();
         return token ? { 'x-admin-token': token } : {};
       }
 
       async function fetchList(){
-        const q = document.getElementById('q').value.trim();
-        const status = document.getElementById('status').value;
-        const url = new URL('/api/admin/submissions', location.origin);
-        url.searchParams.set('page', state.page);
-        url.searchParams.set('pageSize', state.pageSize);
-        if(q) url.searchParams.set('q', q);
-        if(status) url.searchParams.set('status', status);
+        try{
+          setMsg('Loading…');
+          const q = $('q').value.trim();
+          const status = $('status').value;
+          const url = new URL('/api/admin/submissions', location.origin);
+          url.searchParams.set('page', state.page);
+          url.searchParams.set('pageSize', state.pageSize);
+          if(q) url.searchParams.set('q', q);
+          if(status) url.searchParams.set('status', status);
 
-        const res = await fetch(url, { headers: authHeaders(), cache: 'no-store' });
-        if(!res.ok){ alert('Auth failed or API error'); return; }
-        const data = await res.json();
-        state.total = data.total || 0;
-        state.items = data.items || [];
-        render();
+          const res = await fetch(url, { headers: authHeaders(), cache: 'no-store' });
+          if(!res.ok){
+            const text = await res.text().catch(()=>String(res.status));
+            setMsg('API error: ' + text, true);
+            return;
+          }
+          const data = await res.json();
+          state.total = data.total || 0;
+          state.items = data.items || [];
+          render();
+          setMsg(`Loaded ${state.items.length} of ${state.total} items.`);
+        }catch(e){
+          setMsg('Fetch failed: ' + (e?.message || e), true);
+        }
       }
 
       async function openOne(id){
         const url = new URL('/api/admin/submission', location.origin);
         url.searchParams.set('id', id);
         const res = await fetch(url, { headers: authHeaders(), cache: 'no-store' });
-        if(!res.ok){ alert('Open failed'); return; }
+        if(!res.ok){ setMsg('Open failed', true); return; }
         const data = await res.json();
         const w = window.open('', '_blank');
         w.document.write('<pre style="white-space:pre-wrap">'+
@@ -118,7 +133,7 @@
           headers: { 'content-type':'application/json', ...authHeaders() },
           body: JSON.stringify({ id, status })
         });
-        if(res.ok){ fetchList(); } else { alert('Mark failed'); }
+        if(res.ok){ setMsg('Status updated.'); fetchList(); } else { setMsg('Mark failed', true); }
       }
 
       function getFilenameFromDisposition(disposition, fallback){
@@ -132,12 +147,13 @@
 
       async function downloadDocx(id){
         try {
+          setMsg('Exporting…');
           const res = await fetch(`/api/export?id=${encodeURIComponent(id)}`, {
             headers: { ...authHeaders() },
           });
           if(!res.ok){
             const t = await res.text().catch(()=>res.statusText);
-            alert('Export failed: ' + t);
+            setMsg('Export failed: ' + t, true);
             return;
           }
           const blob = await res.blob();
@@ -153,13 +169,14 @@
           a.click();
           a.remove();
           URL.revokeObjectURL(url);
+          setMsg('Downloaded: ' + filename);
         } catch (e) {
-          alert('Export error: ' + (e?.message || e));
+          setMsg('Export error: ' + (e?.message || e), true);
         }
       }
 
       function render(){
-        const rows = document.getElementById('rows');
+        const rows = $('rows');
         rows.innerHTML = state.items.map(item=>{
           const files = (item.files||[]).map(fileLink).join('<br/>');
           const id = item.id || item.key || item._id;
@@ -180,15 +197,16 @@
             </td>
           </tr>`;
         }).join('');
-        document.getElementById('page').textContent = `Page ${state.page}`;
+        $('page').textContent = `Page ${state.page}`;
       }
 
-      document.getElementById('load').onclick = ()=>{ state.page=1; fetchList(); };
-      document.getElementById('prev').onclick = ()=>{ if(state.page>1){ state.page--; fetchList(); } };
-      document.getElementById('next').onclick = ()=>{ state.page++; fetchList(); };
-
-      // Auto-load once on open
-      fetchList();
+      // Hook up buttons AFTER DOM is parsed
+      window.addEventListener('DOMContentLoaded', () => {
+        $('loadBtn').onclick = ()=>{ state.page=1; fetchList(); };
+        $('prev').onclick = ()=>{ if(state.page>1){ state.page--; fetchList(); } };
+        $('next').onclick = ()=>{ state.page++; fetchList(); };
+        fetchList(); // initial load
+      });
     </script>
   </body>
 </html>
