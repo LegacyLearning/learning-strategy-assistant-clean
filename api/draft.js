@@ -1,6 +1,9 @@
 // api/draft.js
-// Generates outcomes/modules that are: Behavioral, Specific, Measurable, Concise.
-// NEW: Accepts `files: string[]` of uploaded public URLs and grounds outcomes in the document text.
+// Generates outcomes/modules that are Behavioral, Specific, Measurable, Concise.
+// Grounds on uploaded document text when provided.
+// Returns shape expected by your current index.html: { draft: { outcomes, modules }, lint? }
+
+export const config = { runtime: "nodejs18.x" };
 
 import OpenAI from "openai";
 import { lintOutcomes, hasBlockingIssues } from "../lib/outcomes.js";
@@ -8,11 +11,15 @@ import { extractTextFromUrl, capTexts } from "../lib/extract.js";
 
 // ---------- helpers ----------
 async function readJsonBody(req) {
-  if (req.body && typeof req.body === "object") return req.body;
-  const chunks = [];
-  for await (const c of req) chunks.push(c);
-  const str = Buffer.concat(chunks).toString("utf8");
-  try { return str ? JSON.parse(str) : {}; } catch { return {}; }
+  try {
+    if (req.body && typeof req.body === "object") return req.body;
+    const chunks = [];
+    for await (const c of req) chunks.push(c);
+    const str = Buffer.concat(chunks).toString("utf8");
+    return str ? JSON.parse(str) : {};
+  } catch {
+    return {};
+  }
 }
 
 function sendJson(res, status, obj) {
@@ -53,8 +60,70 @@ CRITICAL: Respond ONLY as JSON with properties "outcomes" (string[]) and "module
 Each outcome MUST be a single sentence starting with the verb.
 `;
 
+async function generateWithResponses({ openai, model, systemPrompt, userPayload, numOutcomes, numModules }) {
+  const resp = await openai.responses.create({
+    model,
+    temperature: 0.2,
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "learning_strategy",
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            outcomes: {
+              type: "array",
+              minItems: Math.max(1, Number(numOutcomes) || 5),
+              items: { type: "string", maxLength: 180 }
+            },
+            modules: {
+              type: "array",
+              minItems: Math.max(1, Number(numModules) || 4),
+              items: {
+                type: "object",
+                required: ["title"],
+                additionalProperties: false,
+                properties: {
+                  title: { type: "string", maxLength: 120 },
+                  description: { type: "string", maxLength: 400 }
+                }
+              }
+            }
+          },
+          required: ["outcomes", "modules"]
+        }
+      }
+    },
+    input: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: JSON.stringify(userPayload) }
+    ]
+  });
+
+  let draft = {};
+  try { draft = JSON.parse(resp.output_text || "{}"); } catch { draft = {}; }
+  return draft;
+}
+
+async function generateWithChat({ openai, model, systemPrompt, userPayload }) {
+  const completion = await openai.chat.completions.create({
+    model,
+    temperature: 0.2,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: JSON.stringify(userPayload) }
+    ]
+  });
+  let draft = {};
+  try {
+    draft = JSON.parse(completion.choices?.[0]?.message?.content || "{}");
+  } catch { draft = {}; }
+  return draft;
+}
+
 // Optional self-heal rewrite for any non-compliant outcomes
-async function rewriteIfNeeded({ openai, outcomes, context }) {
+async function rewriteIfNeeded({ openai, model, outcomes, context }) {
   const lint = lintOutcomes(outcomes);
   if (!hasBlockingIssues(lint)) return { outcomes, lint };
 
@@ -70,27 +139,44 @@ Return ONLY a JSON array of strings in the same order as provided.`,
     outcomesToFix: toFix.map(r => ({ index: r.idx, text: r.text }))
   };
 
-  const resp = await openai.responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-4o",
-    temperature: 0.1,
-    response_format: { type: "json_object" },
-    input: [
-      { role: "system", content: "You rewrite outcomes to meet strict criteria. Respond with JSON only." },
-      { role: "user", content: JSON.stringify(userPayload) }
-    ]
-  });
-
-  let payload = {};
-  try { payload = JSON.parse(resp.output_text || "{}"); } catch {}
-  const rewrites = Array.isArray(payload) ? payload : payload?.outcomes || [];
-
-  const final = [...outcomes];
-  toFix.forEach((r, j) => {
-    const candidate = rewrites[j];
-    if (typeof candidate === "string" && candidate.trim()) final[r.idx] = candidate.trim();
-  });
-
-  return { outcomes: final, lint: lintOutcomes(final) };
+  // Try Responses first, then Chat
+  try {
+    const resp = await openai.responses.create({
+      model,
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      input: [
+        { role: "system", content: "You rewrite outcomes to meet strict criteria. Respond with JSON only." },
+        { role: "user", content: JSON.stringify(userPayload) }
+      ]
+    });
+    let payload = {};
+    try { payload = JSON.parse(resp.output_text || "{}"); } catch {}
+    const rewrites = Array.isArray(payload) ? payload : payload?.outcomes || [];
+    const final = [...outcomes];
+    toFix.forEach((r, j) => {
+      const candidate = rewrites[j];
+      if (typeof candidate === "string" && candidate.trim()) final[r.idx] = candidate.trim();
+    });
+    return { outcomes: final, lint: lintOutcomes(final) };
+  } catch {
+    const completion = await openai.chat.completions.create({
+      model,
+      temperature: 0.1,
+      messages: [
+        { role: "system", content: "You rewrite outcomes to meet strict criteria. Respond with JSON only." },
+        { role: "user", content: JSON.stringify(userPayload) }
+      ]
+    });
+    let rewrites = [];
+    try { rewrites = JSON.parse(completion.choices?.[0]?.message?.content || "[]"); } catch {}
+    const final = [...outcomes];
+    toFix.forEach((r, j) => {
+      const candidate = rewrites[j];
+      if (typeof candidate === "string" && candidate.trim()) final[r.idx] = candidate.trim();
+    });
+    return { outcomes: final, lint: lintOutcomes(final) };
+  }
 }
 
 export default async function handler(req, res) {
@@ -109,10 +195,10 @@ export default async function handler(req, res) {
       notes,
       numOutcomes,
       numModules,
-      files = [] // <— NEW: array of public URLs from the uploader
+      files = []
     } = await readJsonBody(req);
 
-    // 1) Pull text from uploaded docs (if any), cap sizes to avoid token blowups
+    // 1) Try to extract doc text (non-blocking on failure)
     let docsText = "";
     try {
       const texts = await Promise.all(
@@ -129,70 +215,37 @@ export default async function handler(req, res) {
       organization: process.env.OPENAI_ORG,
       project: process.env.OPENAI_PROJECT
     });
+    const model = process.env.OPENAI_MODEL || "gpt-4o";
 
-    // 3) Build a single user payload — includes *document excerpts*
-    const userPrompt = {
-      form_fields: {
-        organization, summary, audience, constraints, goals, timeline, success_metrics, notes,
-        numOutcomes, numModules
-      },
+    // 3) Build user payload
+    const userPayload = {
+      form_fields: { organization, summary, audience, constraints, goals, timeline, success_metrics, notes, numOutcomes, numModules },
       document_excerpts: docsText || "(no documents provided)"
     };
 
-    // 4) Primary generation w/ JSON Schema guardrails
-    const resp = await openai.responses.create({
-      model: process.env.OPENAI_MODEL || "gpt-4o",
-      temperature: 0.2,
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "learning_strategy",
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              outcomes: {
-                type: "array",
-                minItems: Math.max(1, Number(numOutcomes) || 5),
-                items: { type: "string", maxLength: 180 }
-              },
-              modules: {
-                type: "array",
-                minItems: Math.max(1, Number(numModules) || 4),
-                items: {
-                  type: "object",
-                  required: ["title"],
-                  additionalProperties: false,
-                  properties: {
-                    title: { type: "string", maxLength: 120 },
-                    description: { type: "string", maxLength: 400 }
-                  }
-                }
-              }
-            },
-            required: ["outcomes", "modules"]
-          }
-        }
-      },
-      input: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: JSON.stringify(userPrompt) }
-      ]
-    });
-
+    // 4) Generate (Responses API first; fallback to Chat)
     let draft = {};
-    try { draft = JSON.parse(resp.output_text || "{}"); } catch { draft = { outcomes: [], modules: [] }; }
+    try {
+      draft = await generateWithResponses({ openai, model, systemPrompt, userPayload, numOutcomes, numModules });
+      if (!draft || !draft.outcomes) throw new Error("responses-empty");
+    } catch {
+      draft = await generateWithChat({ openai, model, systemPrompt, userPayload });
+    }
 
-    // 5) Normalize, lint, (optional) heal
-    const outcomes = (draft.outcomes || []).map(x =>
-      typeof x === "string" ? x.trim() : (x?.text || "").trim()
-    );
-    const modules = Array.isArray(draft.modules) ? draft.modules : [];
+    // Normalize
+    const outcomesRaw = Array.isArray(draft?.outcomes) ? draft.outcomes : [];
+    const outcomes = outcomesRaw.map(x => typeof x === "string" ? x.trim() : (x?.text || "").trim());
+    const modules = Array.isArray(draft?.modules) ? draft.modules : [];
 
+    // Heal & lint
     const context = { organization, summary, audience, constraints, goals, timeline, success_metrics, notes, files };
-    const { outcomes: healedOutcomes, lint } = await rewriteIfNeeded({ openai, outcomes, context });
+    const { outcomes: healedOutcomes, lint } = await rewriteIfNeeded({ openai, model, outcomes, context });
 
-    return sendJson(res, 200, { outcomes: healedOutcomes, modules, lint });
+    // IMPORTANT: maintain old response shape your UI expects
+    return sendJson(res, 200, {
+      draft: { outcomes: healedOutcomes, modules },
+      lint
+    });
   } catch (err) {
     console.error("draft error", err);
     return sendJson(res, 500, { error: "Failed to draft outcomes/modules" });
