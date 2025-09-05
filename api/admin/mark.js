@@ -43,14 +43,13 @@ export default async function handler(req, res) {
       updated_at: new Date().toISOString()
     };
 
-    // Overwrite the blob JSON (submissions/<id>.json)
+    // Overwrite the blob JSON (submissions/<id>.json) as PUBLIC
     const { put } = await import('@vercel/blob');
     const pathname = `submissions/${String(id)}.json`;
     await put(pathname, JSON.stringify(updated, null, 2), {
-      access: 'private',
+      access: 'public',               // <-- key change
       contentType: 'application/json',
       addRandomSuffix: false
-      // No explicit token: SDK uses the project's Blob binding
     });
 
     return res.status(200).json({ ok: true, id, status });
