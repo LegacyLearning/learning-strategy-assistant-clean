@@ -1,11 +1,12 @@
 // api/draft.js
-// Enforces outcomes that are Behavioral, Specific, Measurable, and Concise.
-// Returns: { outcomes: string[], modules: {title, description?}[], lint: {text, issues[]}[] }
+// Generates outcomes/modules that are: Behavioral, Specific, Measurable, Concise.
+// NEW: Accepts `files: string[]` of uploaded public URLs and grounds outcomes in the document text.
 
 import OpenAI from "openai";
 import { lintOutcomes, hasBlockingIssues } from "../lib/outcomes.js";
+import { extractTextFromUrl, capTexts } from "../lib/extract.js";
 
-// -- Helpers -----------------------------------------------------------------
+// ---------- helpers ----------
 async function readJsonBody(req) {
   if (req.body && typeof req.body === "object") return req.body;
   const chunks = [];
@@ -20,7 +21,6 @@ function sendJson(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
-// Allowlisted / banned verbs used in the prompt for stricter style
 const PREFERRED_VERBS = [
   "demonstrate","perform","apply","analyze","diagnose","configure","compose","facilitate",
   "evaluate","prioritize","draft","produce","document","calibrate","troubleshoot",
@@ -31,35 +31,34 @@ const BANNED_VERBS = [
   "understand","know","learn","be aware","familiarize","appreciate","grasp","comprehend"
 ];
 
-// Tight system prompt: behavioral, single-skill, measurable, concise (10–18 words)
+// System prompt emphasizes *grounding in documents* + outcome criteria
 const systemPrompt = `
-You are an expert instructional designer. Generate LEARNING OUTCOMES that strictly meet ALL criteria:
+You are an expert instructional designer. Use the provided DOCUMENT EXCERPTS and FORM FIELDS to generate LEARNING OUTCOMES.
 
-1) Behavioral — start with a clear, observable action verb (no "understand/know").
-2) Specific & targeted — one discrete behavior per outcome (no chained actions).
-3) Measurable — include a realistic condition and/or criterion (e.g., "within 5 min", "with 90% accuracy",
+Rules you MUST follow:
+1) Grounding — Base outcomes on the DOCUMENT EXCERPTS and the provided goals/constraints. Do not invent facts not present.
+2) Behavioral — Each outcome starts with an observable action verb (no "understand/know").
+3) Specific & targeted — One discrete behavior per outcome (no chained actions).
+4) Measurable — Include a realistic condition and/or criterion (e.g., "within 5 min", "with 90% accuracy",
    "per the checklist", "without assistance", "in a role-play", "given a scenario").
-4) Clear & concise — 10–18 words; plain language; no jargon.
+5) Clear & concise — 10–18 words; plain language; no jargon.
 
-Prefer action verbs from this allowlist when sensible:
+Prefer verbs from this allowlist when sensible:
 ${PREFERRED_VERBS.join(", ")}
 
 Never use these banned verbs (or close variants):
 ${BANNED_VERBS.join(", ")}
 
-CRITICAL: Respond ONLY as JSON with properties "outcomes" and "modules".
+CRITICAL: Respond ONLY as JSON with properties "outcomes" (string[]) and "modules" (array of {title, description?}).
 Each outcome MUST be a single sentence starting with the verb.
 `;
 
-// Optional self-heal: rewrite non-compliant outcomes in-place
+// Optional self-heal rewrite for any non-compliant outcomes
 async function rewriteIfNeeded({ openai, outcomes, context }) {
   const lint = lintOutcomes(outcomes);
-  if (!hasBlockingIssues(lint)) return { outcomes, lint }; // already good enough
+  if (!hasBlockingIssues(lint)) return { outcomes, lint };
 
-  const toFix = lint
-    .map((r, i) => ({ ...r, idx: i }))
-    .filter(r => r.issues.length);
-
+  const toFix = lint.map((r, i) => ({ ...r, idx: i })).filter(r => r.issues.length);
   const userPayload = {
     instructions: `Rewrite outcomes to meet ALL criteria:
 - Start with an observable action verb (no banned verbs).
@@ -72,7 +71,7 @@ Return ONLY a JSON array of strings in the same order as provided.`,
   };
 
   const resp = await openai.responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-5",
+    model: process.env.OPENAI_MODEL || "gpt-4o",
     temperature: 0.1,
     response_format: { type: "json_object" },
     input: [
@@ -96,13 +95,8 @@ Return ONLY a JSON array of strings in the same order as provided.`,
 
 export default async function handler(req, res) {
   try {
-    if (req.method !== "POST") {
-      return sendJson(res, 405, { error: "Method not allowed" });
-    }
-
-    if (!process.env.OPENAI_API_KEY) {
-      return sendJson(res, 500, { error: "OPENAI_API_KEY not set" });
-    }
+    if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
+    if (!process.env.OPENAI_API_KEY) return sendJson(res, 500, { error: "OPENAI_API_KEY not set" });
 
     const {
       organization,
@@ -114,27 +108,41 @@ export default async function handler(req, res) {
       success_metrics,
       notes,
       numOutcomes,
-      numModules
+      numModules,
+      files = [] // <— NEW: array of public URLs from the uploader
     } = await readJsonBody(req);
 
+    // 1) Pull text from uploaded docs (if any), cap sizes to avoid token blowups
+    let docsText = "";
+    try {
+      const texts = await Promise.all(
+        (Array.isArray(files) ? files : []).slice(0, 6).map(extractTextFromUrl)
+      );
+      docsText = capTexts(texts.filter(Boolean));
+    } catch (e) {
+      console.warn("extract docs failed", e);
+    }
+
+    // 2) Prepare OpenAI client
     const openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
       organization: process.env.OPENAI_ORG,
       project: process.env.OPENAI_PROJECT
     });
 
+    // 3) Build a single user payload — includes *document excerpts*
     const userPrompt = {
-      organization, summary, audience, constraints, goals, timeline, success_metrics, notes,
-      numOutcomes, numModules
+      form_fields: {
+        organization, summary, audience, constraints, goals, timeline, success_metrics, notes,
+        numOutcomes, numModules
+      },
+      document_excerpts: docsText || "(no documents provided)"
     };
 
-    // Primary generation with JSON Schema guardrails
+    // 4) Primary generation w/ JSON Schema guardrails
     const resp = await openai.responses.create({
-      model: process.env.OPENAI_MODEL || "gpt-5",
+      model: process.env.OPENAI_MODEL || "gpt-4o",
       temperature: 0.2,
-      // You can optionally pass GPT-5 controls later:
-      // reasoning: { effort: "minimal" | "medium" | "high" },
-      // verbosity: "low" | "medium" | "high",
       response_format: {
         type: "json_schema",
         json_schema: {
@@ -173,32 +181,20 @@ export default async function handler(req, res) {
     });
 
     let draft = {};
-    try {
-      draft = JSON.parse(resp.output_text || "{}");
-    } catch {
-      draft = { outcomes: [], modules: [] };
-    }
+    try { draft = JSON.parse(resp.output_text || "{}"); } catch { draft = { outcomes: [], modules: [] }; }
 
+    // 5) Normalize, lint, (optional) heal
     const outcomes = (draft.outcomes || []).map(x =>
       typeof x === "string" ? x.trim() : (x?.text || "").trim()
     );
     const modules = Array.isArray(draft.modules) ? draft.modules : [];
 
-    const context = { organization, summary, audience, constraints, goals, timeline, success_metrics, notes };
-    const { outcomes: healedOutcomes, lint } = await rewriteIfNeeded({
-      openai,
-      outcomes,
-      context
-    });
+    const context = { organization, summary, audience, constraints, goals, timeline, success_metrics, notes, files };
+    const { outcomes: healedOutcomes, lint } = await rewriteIfNeeded({ openai, outcomes, context });
 
-    return sendJson(res, 200, {
-      outcomes: healedOutcomes,
-      modules,
-      lint
-    });
+    return sendJson(res, 200, { outcomes: healedOutcomes, modules, lint });
   } catch (err) {
     console.error("draft error", err);
     return sendJson(res, 500, { error: "Failed to draft outcomes/modules" });
   }
 }
-
