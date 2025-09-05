@@ -7,7 +7,6 @@ import { lintOutcomes, hasBlockingIssues } from "../lib/outcomes.js";
 
 // -- Helpers -----------------------------------------------------------------
 async function readJsonBody(req) {
-  // Works on Vercel/Node APIs whether req.body is populated or not
   if (req.body && typeof req.body === "object") return req.body;
   const chunks = [];
   for await (const c of req) chunks.push(c);
@@ -73,7 +72,7 @@ Return ONLY a JSON array of strings in the same order as provided.`,
   };
 
   const resp = await openai.responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-4o",
+    model: process.env.OPENAI_MODEL || "gpt-5",
     temperature: 0.1,
     response_format: { type: "json_object" },
     input: [
@@ -131,8 +130,11 @@ export default async function handler(req, res) {
 
     // Primary generation with JSON Schema guardrails
     const resp = await openai.responses.create({
-      model: process.env.OPENAI_MODEL || "gpt-4o",
+      model: process.env.OPENAI_MODEL || "gpt-5",
       temperature: 0.2,
+      // You can optionally pass GPT-5 controls later:
+      // reasoning: { effort: "minimal" | "medium" | "high" },
+      // verbosity: "low" | "medium" | "high",
       response_format: {
         type: "json_schema",
         json_schema: {
@@ -177,13 +179,11 @@ export default async function handler(req, res) {
       draft = { outcomes: [], modules: [] };
     }
 
-    // Normalize to strings (preserve your data shape)
     const outcomes = (draft.outcomes || []).map(x =>
       typeof x === "string" ? x.trim() : (x?.text || "").trim()
     );
     const modules = Array.isArray(draft.modules) ? draft.modules : [];
 
-    // Lint + optional self-heal pass
     const context = { organization, summary, audience, constraints, goals, timeline, success_metrics, notes };
     const { outcomes: healedOutcomes, lint } = await rewriteIfNeeded({
       openai,
@@ -194,10 +194,11 @@ export default async function handler(req, res) {
     return sendJson(res, 200, {
       outcomes: healedOutcomes,
       modules,
-      lint // non-breaking extra you can show in UI if desired
+      lint
     });
   } catch (err) {
     console.error("draft error", err);
     return sendJson(res, 500, { error: "Failed to draft outcomes/modules" });
   }
 }
+
