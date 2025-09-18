@@ -1,6 +1,5 @@
 // api/draft.js
-// Minimal, deterministic proxy: sends Authorization + projectId to Worker,
-// hits /answer and falls back to /draft if needed.
+// Deterministic proxy: pushes token in headers + body + query; fills projectId; tries /answer then /draft.
 
 export const config = { runtime: "nodejs" };
 
@@ -28,11 +27,22 @@ async function callWorker(url, payload, token, signal) {
   if (token) {
     headers.authorization = `Bearer ${token}`;
     headers["x-api-key"] = token;
+    headers["x-bearer-token"] = token;
+    headers["x-admin-token"] = token;
+    headers["x-auth-token"] = token;
+    headers["x-worker-token"] = token;
+  }
+  const body = { ...payload };
+  if (token) {
+    body.key = body.key || token;
+    body.token = body.token || token;
+    body.apiKey = body.apiKey || token;
+    body.bearer = body.bearer || token;
   }
   const r = await fetch(url, {
     method: "POST",
     headers,
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
     signal
   });
   const text = await r.text();
@@ -46,11 +56,12 @@ export default async function handler(req, res) {
   const BASE = (process.env.CF_WORKER_URL || "").trim();
   if (!BASE) return send(res, 500, { error: "CF_WORKER_URL not set" });
 
-  const token =
-    (process.env.API_BEARER_TOKEN ||
-     process.env.CF_WORKER_TOKEN ||
-     process.env.WORKER_API_KEY ||
-     process.env.ADMIN_TOKEN || "").trim();
+  const token = (
+    process.env.API_BEARER_TOKEN ||
+    process.env.CF_WORKER_TOKEN ||
+    process.env.WORKER_API_KEY ||
+    process.env.ADMIN_TOKEN || ""
+  ).trim();
 
   const payload = await readJsonBody(req);
   if (!payload.projectId && process.env.DEFAULT_PROJECT_ID) {
@@ -61,22 +72,20 @@ export default async function handler(req, res) {
   const t = setTimeout(() => ac.abort(), 60_000);
 
   try {
-    // 1) Try /answer
-    let url = BASE.replace(/\/+$/, "") + "/answer";
+    // try /answer with query token(s)
+    const q = token
+      ? `?token=${encodeURIComponent(token)}&key=${encodeURIComponent(token)}&apiKey=${encodeURIComponent(token)}&bearer=${encodeURIComponent(token)}`
+      : "";
+    let url = BASE.replace(/\/+$/, "") + "/answer" + q;
     let out = await callWorker(url, payload, token, ac.signal);
-    if (out.ok) return send(res, out.status, out.text, { "content-type": out.ctype });
+    if (out.ok) return send(res, out.status, out.text, { "content-type": out.ctype, "x-proxy-used-endpoint": "/answer" });
 
-    // If route missing, try /draft
+    // if route missing, try /draft
     const lower = (out.text || "").toLowerCase();
     const noRoute = out.status === 404 || lower.includes("no route matched") || lower.includes("not found");
-    if (noRoute) {
-      url = BASE.replace(/\/+$/, "") + "/draft";
-      out = await callWorker(url, payload, token, ac.signal);
-      return send(res, out.status, out.text, { "content-type": out.ctype });
-    }
-
-    // Otherwise pass Worker result through (e.g., 400 “Missing projectId” etc.)
-    return send(res, out.status, out.text, { "content-type": out.ctype });
+    url = BASE.replace(/\/+$/, "") + (noRoute ? "/draft" + q : "/draft" + q);
+    out = await callWorker(url, payload, token, ac.signal);
+    return send(res, out.status, out.text, { "content-type": out.ctype, "x-proxy-used-endpoint": "/draft" });
   } catch (e) {
     return send(res, 502, { error: "worker_proxy_failed", detail: String(e?.message || e) });
   } finally {
