@@ -1,14 +1,13 @@
 // api/draft.js
-// Robust proxy to Cloudflare Worker with endpoint fallbacks, flexible auth,
-// and optional Cloudflare Access service-token headers.
+// Proxy to Cloudflare Worker with fallbacks, flexible auth, CF Access support,
+// and DIAGNOSTICS. Now retries other endpoints on 401/403/404 and returns
+// a JSON attempts report if nothing succeeds.
 //
-// Set on Vercel (Project Settings → Environment Variables):
-//   CF_WORKER_URL              = https://id-assistant.jasons-c51.workers.dev     (NO trailing path)
-//   // Any/all of these (same value is fine):
-//   CF_WORKER_TOKEN            = <shared secret>   (optional)
-//   WORKER_API_KEY             = <shared secret>   (optional)
-//   ADMIN_TOKEN                = <shared secret>   (optional)
-//   // If your Worker is behind Cloudflare Access, also set:
+// Vercel env (Project → Settings → Environment Variables):
+//   CF_WORKER_URL              = https://id-assistant.jasons-c51.workers.dev   (NO trailing path)
+//   CF_WORKER_TOKEN            = <secret>   (optional)
+//   WORKER_API_KEY             = <secret>   (optional)
+//   ADMIN_TOKEN                = <secret>   (optional)
 //   CF_ACCESS_CLIENT_ID        = <Access Service Token ID>       (optional)
 //   CF_ACCESS_CLIENT_SECRET    = <Access Service Token Secret>   (optional)
 
@@ -44,7 +43,6 @@ function buildHeaders(secret) {
     h["x-auth-token"] = secret;
     h["x-worker-token"] = secret;
   }
-  // Optional Cloudflare Access service token headers
   const cfId = (process.env.CF_ACCESS_CLIENT_ID || "").trim();
   const cfSecret = (process.env.CF_ACCESS_CLIENT_SECRET || "").trim();
   if (cfId && cfSecret) {
@@ -64,7 +62,6 @@ export default async function handler(req, res) {
   const headers = buildHeaders(secret);
   const payload = await readJsonBody(req);
 
-  // Also include a body key variant some Workers expect
   const bodyObj = { ...payload };
   if (secret && !bodyObj.key && !bodyObj.token && !bodyObj.apiKey) bodyObj.key = secret;
 
@@ -75,7 +72,11 @@ export default async function handler(req, res) {
   const attempts = [];
   try {
     for (const ep of endpoints) {
-      const url = BASE.replace(/\/+$/, "") + ep + (secret ? `?key=${encodeURIComponent(secret)}` : "");
+      const url =
+        BASE.replace(/\/+$/, "") +
+        ep +
+        (secret ? `?key=${encodeURIComponent(secret)}&apiKey=${encodeURIComponent(secret)}&token=${encodeURIComponent(secret)}` : "");
+
       let r, text = "";
       try {
         r = await fetch(url, { method: "POST", headers, body: JSON.stringify(bodyObj), signal: ac.signal });
@@ -85,20 +86,42 @@ export default async function handler(req, res) {
         continue;
       }
 
-      attempts.push({ endpoint: ep, status: r.status, ctype: r.headers.get("content-type") || "" });
-
+      const ctype = r.headers.get("content-type") || "";
       const lower = (text || "").toLowerCase();
       const looksNoRoute = r.status === 404 || lower.includes("no route matched") || lower.includes("not found");
-      if (looksNoRoute) continue;
 
-      const passHeaders = { "content-type": r.headers.get("content-type") || "application/json", "x-proxy-used-endpoint": ep };
-      return send(res, r.status, text, passHeaders);
+      attempts.push({
+        endpoint: ep,
+        status: r.status,
+        contentType: ctype,
+        bodyPreview: (text || "").slice(0, 400)
+      });
+
+      // If 2xx → pass through immediately
+      if (r.ok) {
+        const passHeaders = { "content-type": ctype || "application/json", "x-proxy-used-endpoint": ep };
+        return send(res, r.status, text, passHeaders);
+      }
+
+      // If clearly wrong route or unauthorized/forbidden, try the next endpoint
+      if (looksNoRoute || r.status === 401 || r.status === 403) continue;
+
+      // Other non-2xx (e.g., 400 with details) → return what Worker said
+      const passHeaders = { "content-type": ctype || "application/json", "x-proxy-used-endpoint": ep };
+      return send(res, r.status, text || JSON.stringify({ error: "worker_error" }), passHeaders);
     }
 
+    // Nothing succeeded — return consolidated diagnostics
     return send(
       res,
       502,
-      { error: "worker_unreachable_or_no_matching_route", attempts },
+      {
+        error: "worker_unreachable_or_no_matching_route",
+        hint: "Verify Worker route and auth. See attempts for per-endpoint status and previews.",
+        hadSecret: Boolean(secret),
+        sentHeaders: Object.keys(headers),
+        attempts
+      },
       { "x-proxy-attempts": encodeURIComponent(JSON.stringify(attempts)) }
     );
   } finally {
