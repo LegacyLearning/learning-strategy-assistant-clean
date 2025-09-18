@@ -1,5 +1,5 @@
 // api/diag-openai.js
-export const config = { runtime: "nodejs18.x" };
+export const config = { runtime: "nodejs" };
 import OpenAI from "openai";
 
 function send(res, status, obj) {
@@ -39,3 +39,4 @@ export default async function handler(req, res) {
     return send(res, 500, { ok: false, error: e?.message || "unknown" });
   }
 }
+
