@@ -1,10 +1,10 @@
 // api/draft.js
-// Proxies POSTs to your Cloudflare Worker and includes multiple auth variants.
-// Env on Vercel (all optional except CF_WORKER_URL):
-//   CF_WORKER_URL   = https://id-assistant.jasons-c51.workers.dev
-//   CF_WORKER_TOKEN = <secret>
-//   WORKER_API_KEY  = <secret>
-//   ADMIN_TOKEN     = <secret>
+// Robust proxy to Cloudflare Worker with endpoint fallbacks & flexible auth.
+// Set on Vercel:
+//   CF_WORKER_URL   = https://id-assistant.jasons-c51.workers.dev   (NO trailing path)
+//   CF_WORKER_TOKEN = <secret>   (optional)
+//   WORKER_API_KEY  = <secret>   (optional)
+//   ADMIN_TOKEN     = <secret>   (optional)
 
 export const config = { runtime: "nodejs" };
 
@@ -20,60 +20,77 @@ async function readJsonBody(req) {
   }
 }
 
-function send(res, status, obj, headers = {}) {
+function send(res, status, obj, extra = {}) {
   res.statusCode = status;
-  res.setHeader("Content-Type", headers["content-type"] || "application/json");
-  for (const [k, v] of Object.entries(headers)) {
+  res.setHeader("Content-Type", extra["content-type"] || "application/json");
+  for (const [k, v] of Object.entries(extra)) {
     if (k.toLowerCase() !== "content-type") res.setHeader(k, v);
   }
   res.end(typeof obj === "string" ? obj : JSON.stringify(obj));
 }
 
+function buildHeaders(secret) {
+  const h = { "content-type": "application/json", "x-proxy-diag": "1" };
+  if (secret) {
+    h.authorization = `Bearer ${secret}`;
+    h["x-api-key"] = secret;
+    h["x-admin-token"] = secret;
+    h["x-auth-token"] = secret;
+    h["x-worker-token"] = secret;
+  }
+  return h;
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return send(res, 405, { error: "Method not allowed" });
 
-  const BASE_URL = process.env.CF_WORKER_URL;
-  if (!BASE_URL) return send(res, 500, { error: "CF_WORKER_URL not set" });
+  const BASE = (process.env.CF_WORKER_URL || "").trim();
+  if (!BASE) return send(res, 500, { error: "CF_WORKER_URL not set" });
 
-  // Always post to /draft on the Worker
-  const url = BASE_URL.replace(/\/+$/, "") + "/draft";
-
+  const secret = (process.env.CF_WORKER_TOKEN || process.env.WORKER_API_KEY || process.env.ADMIN_TOKEN || "").trim();
+  const headers = buildHeaders(secret);
   const payload = await readJsonBody(req);
 
-  // Build auth headers + add a JSON fallback key field
-  const secret =
-    (process.env.CF_WORKER_TOKEN || process.env.WORKER_API_KEY || process.env.ADMIN_TOKEN || "").trim();
-
-  const headers = { "content-type": "application/json", "x-proxy-diag": "1" };
-  if (secret) {
-    headers["authorization"] = `Bearer ${secret}`;
-    headers["x-api-key"] = secret;
-    headers["x-admin-token"] = secret;
-    headers["x-auth-token"] = secret;       // extra variant
-    headers["x-worker-token"] = secret;     // extra variant
-  }
-
+  // Also include a body key variant some Workers expect
   const bodyObj = { ...payload };
-  if (secret && !bodyObj.key && !bodyObj.token && !bodyObj.apiKey) {
-    bodyObj.key = secret; // some Workers expect a body key
-  }
+  if (secret && !bodyObj.key && !bodyObj.token && !bodyObj.apiKey) bodyObj.key = secret;
 
+  const endpoints = ["/answer", "/draft", "/strategy", "/strategy-from-fields"];
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 60_000);
 
+  const attempts = [];
   try {
-    const r = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(bodyObj),
-      signal: ac.signal
-    });
+    for (const ep of endpoints) {
+      const url = BASE.replace(/\/+$/, "") + ep + (secret ? `?key=${encodeURIComponent(secret)}` : "");
+      let r, text = "";
+      try {
+        r = await fetch(url, { method: "POST", headers, body: JSON.stringify(bodyObj), signal: ac.signal });
+        text = await r.text();
+      } catch (e) {
+        attempts.push({ endpoint: ep, networkError: String(e?.message || e) });
+        continue;
+      }
 
-    const text = await r.text();
-    const passHeaders = { "content-type": r.headers.get("content-type") || "application/json" };
-    return send(res, r.status, text, passHeaders);
-  } catch (e) {
-    return send(res, 502, { error: "worker_proxy_failed", detail: String(e?.message || e) });
+      attempts.push({ endpoint: ep, status: r.status, ctype: r.headers.get("content-type") || "" });
+
+      // If 404 or a body that clearly says route not found, try next
+      const lower = (text || "").toLowerCase();
+      const looksNoRoute = r.status === 404 || lower.includes("no route matched") || lower.includes("not found");
+      if (looksNoRoute) continue;
+
+      // Otherwise, pass through this response (even 401/400 — that's the definitive answer)
+      const passHeaders = { "content-type": r.headers.get("content-type") || "application/json", "x-proxy-used-endpoint": ep };
+      return send(res, r.status, text, passHeaders);
+    }
+
+    // If we got here, nothing succeeded — return consolidated diagnostics
+    return send(
+      res,
+      502,
+      { error: "worker_unreachable_or_no_matching_route", attempts },
+      { "x-proxy-attempts": encodeURIComponent(JSON.stringify(attempts)) }
+    );
   } finally {
     clearTimeout(timer);
   }
