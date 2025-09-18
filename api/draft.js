@@ -1,8 +1,8 @@
 // api/draft.js
 // Proxies POSTs to your Cloudflare Worker so the front-end can stay the same.
-// Expects CF_WORKER_URL env var set to your Worker endpoint.
+// Requires CF_WORKER_URL to be set to your Worker endpoint (e.g. https://id-assistant.jasons-c51.workers.dev/answer)
 
-export const config = { runtime: "nodejs18.x" };
+export const config = { runtime: "nodejs" };
 
 async function readJsonBody(req) {
   try {
@@ -33,7 +33,7 @@ export default async function handler(req, res) {
 
   const payload = await readJsonBody(req);
 
-  // Forward to Worker
+  // Forward to Worker with a 60s timeout
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 60_000);
 
@@ -46,9 +46,7 @@ export default async function handler(req, res) {
     });
 
     const text = await r.text();
-    const passHeaders = {
-      "content-type": r.headers.get("content-type") || "application/json"
-    };
+    const passHeaders = { "content-type": r.headers.get("content-type") || "application/json" };
     return send(res, r.status, text, passHeaders);
   } catch (e) {
     return send(res, 502, { error: "worker_proxy_failed", detail: String(e?.message || e) });
