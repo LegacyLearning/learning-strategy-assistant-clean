@@ -1,6 +1,6 @@
 // api/diag-imports.js
 // Verifies whether pdf-parse/jszip/fast-xml-parser can be imported under current build.
-export const config = { runtime: "nodejs18.x" };
+export const config = { runtime: "nodejs" };
 
 function send(res, status, obj) {
   res.statusCode = status;
