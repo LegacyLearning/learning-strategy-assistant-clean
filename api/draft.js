@@ -1,10 +1,16 @@
 // api/draft.js
-// Robust proxy to Cloudflare Worker with endpoint fallbacks & flexible auth.
-// Set on Vercel:
-//   CF_WORKER_URL   = https://id-assistant.jasons-c51.workers.dev   (NO trailing path)
-//   CF_WORKER_TOKEN = <secret>   (optional)
-//   WORKER_API_KEY  = <secret>   (optional)
-//   ADMIN_TOKEN     = <secret>   (optional)
+// Robust proxy to Cloudflare Worker with endpoint fallbacks, flexible auth,
+// and optional Cloudflare Access service-token headers.
+//
+// Set on Vercel (Project Settings → Environment Variables):
+//   CF_WORKER_URL              = https://id-assistant.jasons-c51.workers.dev     (NO trailing path)
+//   // Any/all of these (same value is fine):
+//   CF_WORKER_TOKEN            = <shared secret>   (optional)
+//   WORKER_API_KEY             = <shared secret>   (optional)
+//   ADMIN_TOKEN                = <shared secret>   (optional)
+//   // If your Worker is behind Cloudflare Access, also set:
+//   CF_ACCESS_CLIENT_ID        = <Access Service Token ID>       (optional)
+//   CF_ACCESS_CLIENT_SECRET    = <Access Service Token Secret>   (optional)
 
 export const config = { runtime: "nodejs" };
 
@@ -37,6 +43,13 @@ function buildHeaders(secret) {
     h["x-admin-token"] = secret;
     h["x-auth-token"] = secret;
     h["x-worker-token"] = secret;
+  }
+  // Optional Cloudflare Access service token headers
+  const cfId = (process.env.CF_ACCESS_CLIENT_ID || "").trim();
+  const cfSecret = (process.env.CF_ACCESS_CLIENT_SECRET || "").trim();
+  if (cfId && cfSecret) {
+    h["CF-Access-Client-Id"] = cfId;
+    h["CF-Access-Client-Secret"] = cfSecret;
   }
   return h;
 }
@@ -74,17 +87,14 @@ export default async function handler(req, res) {
 
       attempts.push({ endpoint: ep, status: r.status, ctype: r.headers.get("content-type") || "" });
 
-      // If 404 or a body that clearly says route not found, try next
       const lower = (text || "").toLowerCase();
       const looksNoRoute = r.status === 404 || lower.includes("no route matched") || lower.includes("not found");
       if (looksNoRoute) continue;
 
-      // Otherwise, pass through this response (even 401/400 — that's the definitive answer)
       const passHeaders = { "content-type": r.headers.get("content-type") || "application/json", "x-proxy-used-endpoint": ep };
       return send(res, r.status, text, passHeaders);
     }
 
-    // If we got here, nothing succeeded — return consolidated diagnostics
     return send(
       res,
       502,
