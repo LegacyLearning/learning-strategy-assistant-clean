@@ -1,10 +1,10 @@
 // api/draft.js
-// Proxies POSTs to your Cloudflare Worker and includes optional auth headers.
-// Env needed on Vercel:
-//   CF_WORKER_URL = https://id-assistant.jasons-c51.workers.dev   (NO trailing path)
-//   CF_WORKER_TOKEN = <shared secret>            (optional; sent as Authorization: Bearer ...)
-//   WORKER_API_KEY = <shared secret>             (optional; sent as x-api-key: ...)
-//   ADMIN_TOKEN = <shared secret>                (optional; sent as x-admin-token: ...)
+// Proxies POSTs to your Cloudflare Worker and includes multiple auth variants.
+// Env on Vercel (all optional except CF_WORKER_URL):
+//   CF_WORKER_URL   = https://id-assistant.jasons-c51.workers.dev
+//   CF_WORKER_TOKEN = <secret>
+//   WORKER_API_KEY  = <secret>
+//   ADMIN_TOKEN     = <secret>
 
 export const config = { runtime: "nodejs" };
 
@@ -35,19 +35,28 @@ export default async function handler(req, res) {
   const BASE_URL = process.env.CF_WORKER_URL;
   if (!BASE_URL) return send(res, 500, { error: "CF_WORKER_URL not set" });
 
-  // Always hit /draft on the Worker
+  // Always post to /draft on the Worker
   const url = BASE_URL.replace(/\/+$/, "") + "/draft";
 
   const payload = await readJsonBody(req);
 
-  // Build headers
-  const headers = { "content-type": "application/json" };
-  const bearer = (process.env.CF_WORKER_TOKEN || "").trim();
-  const xApiKey = (process.env.WORKER_API_KEY || "").trim();
-  const xAdmin = (process.env.ADMIN_TOKEN || "").trim();
-  if (bearer) headers["authorization"] = `Bearer ${bearer}`;
-  if (xApiKey) headers["x-api-key"] = xApiKey;
-  if (xAdmin) headers["x-admin-token"] = xAdmin;
+  // Build auth headers + add a JSON fallback key field
+  const secret =
+    (process.env.CF_WORKER_TOKEN || process.env.WORKER_API_KEY || process.env.ADMIN_TOKEN || "").trim();
+
+  const headers = { "content-type": "application/json", "x-proxy-diag": "1" };
+  if (secret) {
+    headers["authorization"] = `Bearer ${secret}`;
+    headers["x-api-key"] = secret;
+    headers["x-admin-token"] = secret;
+    headers["x-auth-token"] = secret;       // extra variant
+    headers["x-worker-token"] = secret;     // extra variant
+  }
+
+  const bodyObj = { ...payload };
+  if (secret && !bodyObj.key && !bodyObj.token && !bodyObj.apiKey) {
+    bodyObj.key = secret; // some Workers expect a body key
+  }
 
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 60_000);
@@ -56,7 +65,7 @@ export default async function handler(req, res) {
     const r = await fetch(url, {
       method: "POST",
       headers,
-      body: JSON.stringify(payload),
+      body: JSON.stringify(bodyObj),
       signal: ac.signal
     });
 
