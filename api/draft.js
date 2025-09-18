@@ -1,5 +1,10 @@
 // api/draft.js
-// Proxies POSTs to your Cloudflare Worker. Ensures /draft is always called.
+// Proxies POSTs to your Cloudflare Worker and includes optional auth headers.
+// Env needed on Vercel:
+//   CF_WORKER_URL = https://id-assistant.jasons-c51.workers.dev   (NO trailing path)
+//   CF_WORKER_TOKEN = <shared secret>            (optional; sent as Authorization: Bearer ...)
+//   WORKER_API_KEY = <shared secret>             (optional; sent as x-api-key: ...)
+//   ADMIN_TOKEN = <shared secret>                (optional; sent as x-admin-token: ...)
 
 export const config = { runtime: "nodejs" };
 
@@ -30,10 +35,19 @@ export default async function handler(req, res) {
   const BASE_URL = process.env.CF_WORKER_URL;
   if (!BASE_URL) return send(res, 500, { error: "CF_WORKER_URL not set" });
 
-  // Always forward to /draft on the Worker
+  // Always hit /draft on the Worker
   const url = BASE_URL.replace(/\/+$/, "") + "/draft";
 
   const payload = await readJsonBody(req);
+
+  // Build headers
+  const headers = { "content-type": "application/json" };
+  const bearer = (process.env.CF_WORKER_TOKEN || "").trim();
+  const xApiKey = (process.env.WORKER_API_KEY || "").trim();
+  const xAdmin = (process.env.ADMIN_TOKEN || "").trim();
+  if (bearer) headers["authorization"] = `Bearer ${bearer}`;
+  if (xApiKey) headers["x-api-key"] = xApiKey;
+  if (xAdmin) headers["x-admin-token"] = xAdmin;
 
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 60_000);
@@ -41,7 +55,7 @@ export default async function handler(req, res) {
   try {
     const r = await fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify(payload),
       signal: ac.signal
     });
