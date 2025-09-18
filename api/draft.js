@@ -1,6 +1,6 @@
 // api/draft.js
 // Always return: { ok:true, draft:{ outcomes:[], modules:[] }, worker:<raw> }.
-// Robustly extracts outcomes/modules from *any* Worker JSON shape.
+// Adds grounding via GROUNDING_URLS env and lowers randomness via DEFAULT_TEMPERATURE.
 
 export const config = { runtime: "nodejs" };
 
@@ -15,9 +15,7 @@ async function readJsonBody(req) {
 function send(res, status, body, extra = {}) {
   res.statusCode = status;
   res.setHeader("Content-Type", extra["content-type"] || "application/json");
-  for (const [k, v] of Object.entries(extra)) {
-    if (k.toLowerCase() !== "content-type") res.setHeader(k, v);
-  }
+  for (const [k, v] of Object.entries(extra)) if (k.toLowerCase() !== "content-type") res.setHeader(k, v);
   res.end(typeof body === "string" ? body : JSON.stringify(body));
 }
 
@@ -42,71 +40,45 @@ function normModule(m) {
     activities: asArr(m.activities ?? m.outline ?? m.steps ?? m.tasks).map((s) => str(s)).filter(Boolean),
   };
 }
-
-// Try common shapes first
 function pickCommon(json) {
   const root = json?.draft ?? json?.result ?? json?.answer ?? json;
   const outcomes = root?.outcomes ?? json?.outcomes ?? [];
   const modules  = root?.modules  ?? json?.modules  ?? [];
   return { outcomes: asArr(outcomes), modules: asArr(modules) };
 }
-
-// Fallback: recursively scan object for arrays that *look* like outcomes/modules
 function collectArrays(obj, path = "", out = []) {
-  if (Array.isArray(obj)) {
-    out.push({ path, key: path.split(".").pop() || "", arr: obj });
-    return out;
-  }
-  if (isObj(obj)) {
-    for (const [k, v] of Object.entries(obj)) collectArrays(v, path ? `${path}.${k}` : k, out);
-  }
+  if (Array.isArray(obj)) { out.push({ path, key: path.split(".").pop() || "", arr: obj }); return out; }
+  if (isObj(obj)) for (const [k, v] of Object.entries(obj)) collectArrays(v, path ? `${path}.${k}` : k, out);
   return out;
 }
-function scoreArray(entry) {
-  const { key, arr } = entry;
-  const k = (key || "").toLowerCase();
-  const hasTitleObjs = arr.some((x) => isObj(x) && (x.title || x.objective || x.description));
-  const allStrings = arr.length && arr.every((x) => typeof x === "string");
-  let score = 0;
-  if (/outcome|objective|goal/.test(k)) score += 5;
-  if (/module|unit|lesson|section/.test(k)) score += 5;
-  if (hasTitleObjs) score += 3;
-  if (allStrings) score += 2;
-  score += Math.min(arr.length, 6) * 0.2; // prefer non-empty
-  return score;
+function scoreArray(e) {
+  const k = (e.key || "").toLowerCase(), a = e.arr;
+  const hasTitles = a.some(x => isObj(x) && (x.title || x.objective || x.description));
+  const allStrings = a.length && a.every(x => typeof x === "string");
+  let s = 0;
+  if (/outcome|objective|goal/.test(k)) s += 5;
+  if (/module|unit|lesson|section/.test(k)) s += 5;
+  if (hasTitles) s += 3;
+  if (allStrings) s += 2;
+  s += Math.min(a.length, 6) * 0.2;
+  return s;
 }
 function guessDraft(json) {
-  const entries = collectArrays(json);
+  const entries = collectArrays(json).sort((a,b)=>scoreArray(b)-scoreArray(a));
   if (!entries.length) return { outcomes: [], modules: [] };
-
-  // Sort best-looking arrays first
-  entries.sort((a, b) => scoreArray(b) - scoreArray(a));
-
-  // Choose candidates
-  let outcomesCand = entries.find(e => /outcome|objective|goal/i.test(e.key)) || entries[0];
-  let modulesCand  = entries.find(e => /module|unit|lesson|section/i.test(e.key) && e !== outcomesCand)
-                    || entries.find(e => e !== outcomesCand) || entries[0];
-
-  const outcomes = asArr(outcomesCand?.arr).map(normOutcome).filter(x => x.title || x.description || x.behaviors?.length);
-  const modules  = asArr(modulesCand?.arr).map(normModule).filter(x => x.title || x.objective || x.activities?.length);
-
-  return { outcomes, modules };
+  const outcomesCand = entries.find(e=>/outcome|objective|goal/i.test(e.key)) || entries[0];
+  const modulesCand  = entries.find(e=>/module|unit|lesson|section/i.test(e.key) && e!==outcomesCand) || entries.find(e=>e!==outcomesCand) || entries[0];
+  return {
+    outcomes: asArr(outcomesCand?.arr).map(normOutcome).filter(x=>x.title||x.description||x.behaviors?.length),
+    modules:  asArr(modulesCand?.arr).map(normModule).filter(x=>x.title||x.objective||x.activities?.length),
+  };
 }
 
 async function callWorker(url, payload, token, signal) {
   const headers = { "content-type": "application/json" };
-  if (token) {
-    headers.authorization   = `Bearer ${token}`;
-    headers["x-api-key"]    = token;
-    headers["x-bearer-token"] = token;
-  }
+  if (token) { headers.authorization = `Bearer ${token}`; headers["x-api-key"] = token; headers["x-bearer-token"] = token; }
   const body = { ...payload };
-  if (token) {
-    body.key    = body.key    || token;
-    body.token  = body.token  || token;
-    body.apiKey = body.apiKey || token;
-    body.bearer = body.bearer || token;
-  }
+  if (token) { body.key = body.key || token; body.token = body.token || token; body.apiKey = body.apiKey || token; body.bearer = body.bearer || token; }
   const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal });
   const text = await r.text();
   const ctype = r.headers.get("content-type") || "application/json";
@@ -127,16 +99,29 @@ export default async function handler(req, res) {
   ).trim();
 
   const payload = await readJsonBody(req);
+
+  // ——— grounding via env ———
+  const ENV_URLS = (process.env.GROUNDING_URLS || "")
+    .split(",").map(s=>s.trim()).filter(Boolean);
+  if (ENV_URLS.length) {
+    const existing = Array.isArray(payload.files) ? payload.files.filter(Boolean) : [];
+    payload.files = Array.from(new Set([...existing, ...ENV_URLS])).slice(0, 8);
+  }
+
+  // ——— projectId fallback ———
   if (!payload.projectId && process.env.DEFAULT_PROJECT_ID) {
     payload.projectId = process.env.DEFAULT_PROJECT_ID.trim();
   }
 
-  const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 60_000);
-  try {
-    const q = token
-      ? `?token=${encodeURIComponent(token)}&key=${encodeURIComponent(token)}&apiKey=${encodeURIComponent(token)}&bearer=${encodeURIComponent(token)}`
-      : "";
+  // ——— lower randomness ———
+  const DEFAULT_TEMPERATURE = Number(process.env.DEFAULT_TEMPERATURE || "0.2");
+  if (payload.temperature == null || Number.isNaN(Number(payload.temperature))) {
+    payload.temperature = DEFAULT_TEMPERATURE;
+  }
 
+  const ac = new AbortController(); const t = setTimeout(()=>ac.abort(), 60_000);
+  try {
+    const q = token ? `?token=${encodeURIComponent(token)}&key=${encodeURIComponent(token)}&apiKey=${encodeURIComponent(token)}&bearer=${encodeURIComponent(token)}` : "";
     // Try /answer first, then /draft
     let used = "/answer";
     let out = await callWorker(BASE.replace(/\/+$/, "") + used + q, payload, token, ac.signal);
@@ -147,29 +132,19 @@ export default async function handler(req, res) {
     }
     if (!out.ok) return send(res, out.status, out.text, { "content-type": out.ctype, "x-proxy-used-endpoint": used });
 
-    // Parse Worker JSON
-    let workerJson = {};
-    try { workerJson = JSON.parse(out.text); } catch { /* non-JSON; will yield empty draft */ }
+    let workerJson = {}; try { workerJson = JSON.parse(out.text); } catch {}
 
-    // 1) Common shapes
+    // Extract outcomes/modules
     let { outcomes, modules } = pickCommon(workerJson);
+    if (!outcomes.length && !modules.length) ({ outcomes, modules } = guessDraft(workerJson));
 
-    // 2) If still empty, guess from any arrays
-    if (!outcomes.length && !modules.length) {
-      const guessed = guessDraft(workerJson);
-      outcomes = guessed.outcomes; modules = guessed.modules;
-    }
-
-    // 3) Final normalization
     const draft = {
-      outcomes: asArr(outcomes).map(normOutcome).filter(x => x.title || x.description || x.behaviors?.length),
-      modules:  asArr(modules).map(normModule).filter(x => x.title || x.objective || x.activities?.length),
+      outcomes: asArr(outcomes).map(normOutcome).filter(x=>x.title||x.description||x.behaviors?.length),
+      modules:  asArr(modules).map(normModule).filter(x=>x.title||x.objective||x.activities?.length),
     };
 
-    return send(res, 200, { ok: true, draft, worker: workerJson }, { "x-proxy-used-endpoint": used });
+    return send(res, 200, { ok:true, draft, worker: workerJson }, { "x-proxy-used-endpoint": used });
   } catch (e) {
-    return send(res, 502, { error: "worker_proxy_failed", detail: String(e?.message || e) });
-  } finally {
-    clearTimeout(t);
-  }
+    return send(res, 502, { error:"worker_proxy_failed", detail:String(e?.message||e) });
+  } finally { clearTimeout(t); }
 }
