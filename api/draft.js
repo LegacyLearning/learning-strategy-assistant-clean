@@ -1,6 +1,5 @@
 // api/draft.js
-// Proxies POSTs to your Cloudflare Worker so the front-end can stay the same.
-// Requires CF_WORKER_URL to be set to your Worker endpoint (e.g. https://id-assistant.jasons-c51.workers.dev/answer)
+// Proxies POSTs to your Cloudflare Worker. Ensures /draft is always called.
 
 export const config = { runtime: "nodejs" };
 
@@ -28,17 +27,19 @@ function send(res, status, obj, headers = {}) {
 export default async function handler(req, res) {
   if (req.method !== "POST") return send(res, 405, { error: "Method not allowed" });
 
-  const WORKER_URL = process.env.CF_WORKER_URL;
-  if (!WORKER_URL) return send(res, 500, { error: "CF_WORKER_URL not set" });
+  const BASE_URL = process.env.CF_WORKER_URL;
+  if (!BASE_URL) return send(res, 500, { error: "CF_WORKER_URL not set" });
+
+  // Always forward to /draft on the Worker
+  const url = BASE_URL.replace(/\/+$/, "") + "/draft";
 
   const payload = await readJsonBody(req);
 
-  // Forward to Worker with a 60s timeout
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 60_000);
 
   try {
-    const r = await fetch(WORKER_URL, {
+    const r = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
