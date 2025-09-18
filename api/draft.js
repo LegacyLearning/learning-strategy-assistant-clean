@@ -1,15 +1,6 @@
 // api/draft.js
-// Proxy to Cloudflare Worker with fallbacks, flexible auth, CF Access support,
-// and DIAGNOSTICS. Now retries other endpoints on 401/403/404 and returns
-// a JSON attempts report if nothing succeeds.
-//
-// Vercel env (Project → Settings → Environment Variables):
-//   CF_WORKER_URL              = https://id-assistant.jasons-c51.workers.dev   (NO trailing path)
-//   CF_WORKER_TOKEN            = <secret>   (optional)
-//   WORKER_API_KEY             = <secret>   (optional)
-//   ADMIN_TOKEN                = <secret>   (optional)
-//   CF_ACCESS_CLIENT_ID        = <Access Service Token ID>       (optional)
-//   CF_ACCESS_CLIENT_SECRET    = <Access Service Token Secret>   (optional)
+// Minimal, deterministic proxy: sends Authorization + projectId to Worker,
+// hits /answer and falls back to /draft if needed.
 
 export const config = { runtime: "nodejs" };
 
@@ -20,36 +11,33 @@ async function readJsonBody(req) {
     for await (const c of req) chunks.push(c);
     const str = Buffer.concat(chunks).toString("utf8");
     return str ? JSON.parse(str) : {};
-  } catch {
-    return {};
-  }
+  } catch { return {}; }
 }
 
-function send(res, status, obj, extra = {}) {
+function send(res, status, body, extra = {}) {
   res.statusCode = status;
   res.setHeader("Content-Type", extra["content-type"] || "application/json");
   for (const [k, v] of Object.entries(extra)) {
     if (k.toLowerCase() !== "content-type") res.setHeader(k, v);
   }
-  res.end(typeof obj === "string" ? obj : JSON.stringify(obj));
+  res.end(typeof body === "string" ? body : JSON.stringify(body));
 }
 
-function buildHeaders(secret) {
-  const h = { "content-type": "application/json", "x-proxy-diag": "1" };
-  if (secret) {
-    h.authorization = `Bearer ${secret}`;
-    h["x-api-key"] = secret;
-    h["x-admin-token"] = secret;
-    h["x-auth-token"] = secret;
-    h["x-worker-token"] = secret;
+async function callWorker(url, payload, token, signal) {
+  const headers = { "content-type": "application/json" };
+  if (token) {
+    headers.authorization = `Bearer ${token}`;
+    headers["x-api-key"] = token;
   }
-  const cfId = (process.env.CF_ACCESS_CLIENT_ID || "").trim();
-  const cfSecret = (process.env.CF_ACCESS_CLIENT_SECRET || "").trim();
-  if (cfId && cfSecret) {
-    h["CF-Access-Client-Id"] = cfId;
-    h["CF-Access-Client-Secret"] = cfSecret;
-  }
-  return h;
+  const r = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+    signal
+  });
+  const text = await r.text();
+  const ctype = r.headers.get("content-type") || "application/json";
+  return { ok: r.ok, status: r.status, text, ctype };
 }
 
 export default async function handler(req, res) {
@@ -58,73 +46,40 @@ export default async function handler(req, res) {
   const BASE = (process.env.CF_WORKER_URL || "").trim();
   if (!BASE) return send(res, 500, { error: "CF_WORKER_URL not set" });
 
-  const secret = (process.env.CF_WORKER_TOKEN || process.env.WORKER_API_KEY || process.env.ADMIN_TOKEN || "").trim();
-  const headers = buildHeaders(secret);
+  const token =
+    (process.env.API_BEARER_TOKEN ||
+     process.env.CF_WORKER_TOKEN ||
+     process.env.WORKER_API_KEY ||
+     process.env.ADMIN_TOKEN || "").trim();
+
   const payload = await readJsonBody(req);
+  if (!payload.projectId && process.env.DEFAULT_PROJECT_ID) {
+    payload.projectId = process.env.DEFAULT_PROJECT_ID.trim();
+  }
 
-  const bodyObj = { ...payload };
-  if (secret && !bodyObj.key && !bodyObj.token && !bodyObj.apiKey) bodyObj.key = secret;
-
-  const endpoints = ["/answer", "/draft", "/strategy", "/strategy-from-fields"];
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), 60_000);
+  const t = setTimeout(() => ac.abort(), 60_000);
 
-  const attempts = [];
   try {
-    for (const ep of endpoints) {
-      const url =
-        BASE.replace(/\/+$/, "") +
-        ep +
-        (secret ? `?key=${encodeURIComponent(secret)}&apiKey=${encodeURIComponent(secret)}&token=${encodeURIComponent(secret)}` : "");
+    // 1) Try /answer
+    let url = BASE.replace(/\/+$/, "") + "/answer";
+    let out = await callWorker(url, payload, token, ac.signal);
+    if (out.ok) return send(res, out.status, out.text, { "content-type": out.ctype });
 
-      let r, text = "";
-      try {
-        r = await fetch(url, { method: "POST", headers, body: JSON.stringify(bodyObj), signal: ac.signal });
-        text = await r.text();
-      } catch (e) {
-        attempts.push({ endpoint: ep, networkError: String(e?.message || e) });
-        continue;
-      }
-
-      const ctype = r.headers.get("content-type") || "";
-      const lower = (text || "").toLowerCase();
-      const looksNoRoute = r.status === 404 || lower.includes("no route matched") || lower.includes("not found");
-
-      attempts.push({
-        endpoint: ep,
-        status: r.status,
-        contentType: ctype,
-        bodyPreview: (text || "").slice(0, 400)
-      });
-
-      // If 2xx → pass through immediately
-      if (r.ok) {
-        const passHeaders = { "content-type": ctype || "application/json", "x-proxy-used-endpoint": ep };
-        return send(res, r.status, text, passHeaders);
-      }
-
-      // If clearly wrong route or unauthorized/forbidden, try the next endpoint
-      if (looksNoRoute || r.status === 401 || r.status === 403) continue;
-
-      // Other non-2xx (e.g., 400 with details) → return what Worker said
-      const passHeaders = { "content-type": ctype || "application/json", "x-proxy-used-endpoint": ep };
-      return send(res, r.status, text || JSON.stringify({ error: "worker_error" }), passHeaders);
+    // If route missing, try /draft
+    const lower = (out.text || "").toLowerCase();
+    const noRoute = out.status === 404 || lower.includes("no route matched") || lower.includes("not found");
+    if (noRoute) {
+      url = BASE.replace(/\/+$/, "") + "/draft";
+      out = await callWorker(url, payload, token, ac.signal);
+      return send(res, out.status, out.text, { "content-type": out.ctype });
     }
 
-    // Nothing succeeded — return consolidated diagnostics
-    return send(
-      res,
-      502,
-      {
-        error: "worker_unreachable_or_no_matching_route",
-        hint: "Verify Worker route and auth. See attempts for per-endpoint status and previews.",
-        hadSecret: Boolean(secret),
-        sentHeaders: Object.keys(headers),
-        attempts
-      },
-      { "x-proxy-attempts": encodeURIComponent(JSON.stringify(attempts)) }
-    );
+    // Otherwise pass Worker result through (e.g., 400 “Missing projectId” etc.)
+    return send(res, out.status, out.text, { "content-type": out.ctype });
+  } catch (e) {
+    return send(res, 502, { error: "worker_proxy_failed", detail: String(e?.message || e) });
   } finally {
-    clearTimeout(timer);
+    clearTimeout(t);
   }
 }
