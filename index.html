@@ -1,32 +1,142 @@
-<script>
-// Override AI launch to parse JSON and render "Course → Outcomes".
-(function(){
-  // 1) Hook the button
-  const aiBtn = document.getElementById('aiBtn');
-  if(!aiBtn){ console.warn('aiBtn not found'); return; }
-  aiBtn.onclick = handleAiLaunch;
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Instructional Design Assistant</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Set your Worker URL -->
+  <script>
+    // Example: https://id-assistant.jasons-c51.workers.dev
+    window.CF_WORKER_URL = "https://id-assistant.jasons-c51.workers.dev";
+  </script>
+  <style>
+    :root{--bg:#f6f7f9;--fg:#111;--muted:#666;--card:#fff;--bd:#ddd;--accent:#111}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--fg)}
+    header{background:var(--accent);color:#fff;padding:16px 20px}
+    main{max-width:1100px;margin:24px auto;padding:0 20px}
+    .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:16px}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    label{display:block;font-weight:600;margin:0 0 6px}
+    input,textarea,button{width:100%;padding:10px;border:1px solid #ccc;border-radius:10px;font-size:14px}
+    textarea{min-height:110px}
+    .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+    .btn{cursor:pointer;border:1px solid var(--accent);border-radius:10px}
+    .btn.primary{background:var(--accent);color:#fff}
+    .btn.secondary{background:#fff;color:var(--accent)}
+    .small{font-size:12px;color:var(--muted)}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap}
+    .msg{margin:8px 0;color:#222}
+    .msg.bad{color:#a00}
+    ul{margin:6px 0 0 18px}
+  </style>
+</head>
+<body>
+  <header>
+    <h1 style="margin:0">Instructional Design Assistant</h1>
+    <div class="small">Outputs: <strong>Course</strong> then <strong>Outcomes</strong>.</div>
+  </header>
 
-  // 2) Small helpers
-  const $ = (id)=>document.getElementById(id);
-  function text(id){ const el=$(id); return el ? el.value?.trim?.() || el.textContent?.trim?.() || '' : ''; }
-  function setMsg(t,bad=false){
-    const m=document.getElementById('msg') || document.createElement('div');
-    m.id='msg'; m.className='msg'+(bad?' bad':''); m.textContent=t;
-    if(!m.parentNode){ (document.body || document.documentElement).appendChild(m); }
-  }
+  <main>
+    <form id="ida-form" class="card">
+      <h2 style="margin-top:0">Inputs</h2>
 
-  // 3) Build payload from your existing inputs (adjust IDs if your page uses different ones)
-  function buildPayload(){
-    // Gather what you already collect on the page
-    const fields = {
-      audience: text('audience'),
-      constraints: text('constraints'),
-      goals: text('goals') || text('summary') || '',
-      modules: Number(document.getElementById('modules')?.value || 0) || 0
+      <div class="row">
+        <div>
+          <label for="projectTitle">Course Title</label>
+          <input id="projectTitle" name="projectTitle" type="text" placeholder="e.g., International Security Awareness Refresher" />
+        </div>
+        <div>
+          <label for="modules">Number of Modules</label>
+          <input id="modules" name="modules" type="number" min="0" value="0" />
+          <div class="small">Use 0 to let AI decide.</div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="audience">Audience</label>
+          <textarea id="audience" name="audience" placeholder="Roles, context, prior knowledge."></textarea>
+        </div>
+        <div>
+          <label for="goals">Business Goals</label>
+          <textarea id="goals" name="goals" placeholder="Behavior or performance you want to improve."></textarea>
+        </div>
+      </div>
+
+      <div>
+        <label for="constraints">Constraints</label>
+        <textarea id="constraints" name="constraints" placeholder="Time limits, tools, compliance, delivery format, etc."></textarea>
+      </div>
+
+      <div class="actions">
+        <button type="button" class="btn secondary" id="btn-clear">Clear</button>
+        <button type="button" class="btn primary" id="aiBtn">Launch AI Instructional Designer</button>
+      </div>
+
+      <div id="aiMsg" class="msg"></div>
+    </form>
+
+    <section id="output" class="card" aria-live="polite">
+      <h2 style="margin-top:0">Result</h2>
+      <div id="aiResult"></div>
+      <details style="margin-top:10px">
+        <summary>Raw JSON</summary>
+        <pre id="raw" class="mono">{}</pre>
+      </details>
+    </section>
+  </main>
+
+  <!-- Single-file logic -->
+  <script>
+  // ---- transport (no external files required) ----
+  (function(){
+    async function postJSON(url, body, { signal } = {}) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal
+      });
+      const ct = res.headers.get("content-type") || "";
+      const isJson = ct.includes("application/json");
+      const data = isJson ? await res.json().catch(()=>null) : await res.text();
+      if (!res.ok) {
+        const msg =
+          (isJson && data && data.error && (data.error.message || data.error.code)) ||
+          (isJson && data && data.message) || ("HTTP " + res.status);
+        const e = new Error(msg); e.status = res.status; e.response = data; throw e;
+      }
+      return data;
+    }
+    window.runAIDraft = async function runAIDraft(payload, { signal } = {}) {
+      if (!window.CF_WORKER_URL) throw new Error("CF_WORKER_URL not set");
+      const res = await postJSON(window.CF_WORKER_URL + "/answer", payload, { signal });
+      const draftText = res?.data?.draft ?? res?.draft ?? res?.data ?? "";
+      if (typeof draftText !== "string" || !draftText.trim()) throw new Error("Empty model response");
+      return draftText;
     };
-    // Include a prompt if your Worker expects it; otherwise fields alone is fine
+  })();
+
+  // ---- helpers ----
+  function $(sel){ return document.querySelector(sel); }
+  function byId(id){ return document.getElementById(id); }
+  function val(el){ return el ? ("value" in el ? (el.value||"").trim() : (el.textContent||"").trim()) : ""; }
+  function escapeHtml(s){ return String(s).replace(/[&<>"]/g,c=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c])); }
+  function setMsg(t,bad=false){ const m=byId("aiMsg"); if(m){ m.textContent=t; m.className="msg"+(bad?" bad":""); } }
+
+  // ---- payload ----
+  function buildPayload(){
+    const fields = {
+      projectTitle: val(byId("projectTitle")),
+      audience: val(byId("audience")),
+      goals: val(byId("goals")),
+      constraints: val(byId("constraints")),
+      modules: parseInt(val(byId("modules"))||"0",10)||0
+    };
+
     const prompt =
-`ROLE: Instructional Design assistant
+`ROLE: Instructional Design assistant.
 TASK: Return STRICT JSON only. No markdown. No prose.
 FORMAT: { "modules": [ { "name": "Module name", "outcomes": ["Outcome 1","Outcome 2","Outcome 3"] } ] }
 RULES:
@@ -36,86 +146,64 @@ RULES:
 - Ban the words "understand" and "understanding".
 - Outcomes must be observable and measurable without percentages.
 
-AUDIENCE: ${fields.audience || 'TBD'}
-CONSTRAINTS: ${fields.constraints || 'TBD'}
-GOALS: ${fields.goals || 'TBD'}
+AUDIENCE: ${fields.audience || "TBD"}
+GOALS: ${fields.goals || "TBD"}
+CONSTRAINTS: ${fields.constraints || "TBD"}
 USER_MODULES: ${fields.modules}`;
 
     return { prompt, fields };
   }
 
-  // 4) Parse model text safely → object
-  function toJson(draftText){
-    if (typeof draftText === 'object' && draftText !== null) return draftText;
-    let s = String(draftText || '').trim();
-    // Try direct parse
-    try { return JSON.parse(s); } catch(_) {}
-    // Try extracting last JSON block
-    const m = s.match(/\{[\s\S]*\}$/);
-    if(m){ try { return JSON.parse(m[0]); } catch(_) {} }
-    throw new Error('AI returned non-JSON text');
+  // ---- parse + transform ----
+  function parseJson(text){
+    try { return typeof text === "string" ? JSON.parse(text) : text; } catch(_) {}
+    const m = String(text||"").match(/\{[\s\S]*\}$/); if(!m) throw new Error("AI returned non-JSON");
+    return JSON.parse(m[0]);
   }
-
-  // 5) Convert modules → Course + Outcomes list
   function toCourseOutcomes(obj){
     const mods = Array.isArray(obj.modules) ? obj.modules : [];
-    const outcomes = [];
+    const outs = [];
     for(const m of mods){
-      if (Array.isArray(m?.outcomes)) {
-        for (const o of m.outcomes) {
-          if (typeof o === 'string' && o.trim()) outcomes.push(o.trim());
-        }
+      if(Array.isArray(m?.outcomes)){
+        for(const o of m.outcomes){ if(typeof o==="string" && o.trim()) outs.push(o.trim()); }
       }
     }
-    // Fallback if empty
-    if(!outcomes.length) outcomes.push('Define success criteria using approved template');
-    return {
-      course: (document.getElementById('projectTitle')?.value || 'Course Plan').trim() || 'Course Plan',
-      outcomes
-    };
+    const title = val(byId("projectTitle")) || "Course Plan";
+    return { course: title, outcomes: outs.length ? outs : ["Explain the escalation path using approved terms"] };
   }
 
-  // 6) Render into your existing UI
-  function renderCourseOutcomes(result){
-    // Try to use existing areas if present; otherwise create a simple display.
-    const containerId = 'aiResult';
-    let box = document.getElementById(containerId);
-    if(!box){
-      box = document.createElement('div');
-      box.id = containerId;
-      // Place under your existing results area if present
-      const anchor = document.querySelector('#aiOutput, #render, .card, main') || document.body;
-      anchor.appendChild(box);
-    }
+  // ---- render ----
+  function render(result){
+    const box = byId("aiResult");
     box.innerHTML = `
       <div class="card" style="margin-top:12px">
         <h2 style="margin:0 0 8px 0">Course</h2>
         <div>${escapeHtml(result.course)}</div>
         <h2 style="margin:16px 0 8px 0">Outcomes</h2>
-        <ul>${result.outcomes.map(o=>`<li>${escapeHtml(o)}</li>`).join('')}</ul>
+        <ul>${result.outcomes.map(o=>`<li>${escapeHtml(o)}</li>`).join("")}</ul>
       </div>
     `;
+    byId("raw").textContent = JSON.stringify({ course: result.course, outcomes: result.outcomes }, null, 2);
   }
 
-  function escapeHtml(s){
-    return String(s).replace(/[&<>"]/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+  // ---- main ----
+  async function launchAI(){
+    setMsg("Launching AI…");
+    const payload = buildPayload();
+    const draftText = await window.runAIDraft(payload);
+    const obj = parseJson(draftText);
+    const result = toCourseOutcomes(obj);
+    render(result);
+    setMsg("AI done.");
   }
 
-  // 7) Main click handler
-  async function handleAiLaunch(){
-    try{
-      setMsg('Launching AI…');
-      const payload = buildPayload();
-      // runAIDraft is provided by api/draft.js we installed earlier
-      const draftText = await window.runAIDraft(payload);
-      const obj = toJson(draftText);
-      const result = toCourseOutcomes(obj);
-      renderCourseOutcomes(result);
-      setMsg('AI done.');
-    }catch(e){
-      console.error(e);
-      setMsg('AI error: ' + (e?.message || e), true);
-    }
-  }
-})();
-</script>
+  // ---- wire UI ----
+  window.addEventListener("DOMContentLoaded", () => {
+    const btn = byId("aiBtn");
+    const clr = byId("btn-clear");
+    if (btn) btn.addEventListener("click", (e)=>{ e.preventDefault(); launchAI().catch(err=>{ console.error(err); setMsg("AI error: " + (err?.message||err), true); }); });
+    if (clr) clr.addEventListener("click", (e)=>{ e.preventDefault(); byId("ida-form").reset(); setMsg(""); byId("aiResult").innerHTML=""; byId("raw").textContent="{}"; });
+  });
+  </script>
+</body>
+</html>
