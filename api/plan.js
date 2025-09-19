@@ -1,13 +1,15 @@
-// Vercel Serverless Function: POST /api/plan
-// - If WORKER_BASE_URL is set, forwards the JSON payload to <WORKER_BASE_URL>/answer
-//   and returns the Worker response.
-// - Otherwise returns a local dummy plan so the UI works now.
+// api/plan.js
+// POST only. If CF_WORKER_URL is set, proxy to <CF_WORKER_URL>/answer.
+// Otherwise return a local dummy plan so the UI works immediately.
 
-module.exports = async (req, res) => {
+export const config = { runtime: "nodejs" };
+
+export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.statusCode = 405;
     res.setHeader("Allow", "POST");
-    return res.end("Method Not Allowed");
+    res.end("Method Not Allowed");
+    return;
   }
 
   const body = await readJson(req);
@@ -17,7 +19,7 @@ module.exports = async (req, res) => {
     audience = "",
     requestedModuleCount,
     experienceTypes = [],
-    // files may be wired later
+    files = [],
   } = body || {};
 
   const decidedCount =
@@ -25,41 +27,55 @@ module.exports = async (req, res) => {
       ? requestedModuleCount
       : 4;
 
-  const workerBase = process.env.WORKER_BASE_URL;
+  const BASE = (process.env.CF_WORKER_URL || "").trim();
+  const TOKEN = (
+    process.env.API_BEARER_TOKEN ||
+    process.env.CF_WORKER_TOKEN ||
+    process.env.WORKER_API_KEY ||
+    process.env.ADMIN_TOKEN ||
+    ""
+  ).trim();
 
-  // Try proxy to Cloudflare Worker if configured
-  if (workerBase) {
+  // Try proxy to Worker if configured
+  if (BASE) {
     try {
-      const url = new URL("/answer", workerBase).toString();
+      const url = BASE.replace(/\/+$/, "") + "/answer";
+      const payload = {
+        orgName,
+        overview,
+        audience,
+        requestedModuleCount,
+        experienceTypes,
+        files,
+      };
       const headers = { "content-type": "application/json" };
-      if (process.env.CF_ACCESS_CLIENT_ID)
-        headers["CF-Access-Client-Id"] = process.env.CF_ACCESS_CLIENT_ID;
-      if (process.env.CF_ACCESS_CLIENT_SECRET)
-        headers["CF-Access-Client-Secret"] = process.env.CF_ACCESS_CLIENT_SECRET;
-
-      const resp = await fetch(url, {
+      if (TOKEN) {
+        headers.authorization = `Bearer ${TOKEN}`;
+        headers["x-api-key"] = TOKEN;
+      }
+      const r = await fetch(url, {
         method: "POST",
         headers,
-        body: JSON.stringify({
-          orgName,
-          overview,
-          audience,
-          requestedModuleCount,
-          experienceTypes,
-          files: body.files || [],
-        }),
+        body: JSON.stringify(payload),
       });
-
-      const data = await resp.json().catch(() => ({}));
-      res.statusCode = resp.status || 200;
-      res.setHeader("content-type", "application/json");
-      return res.end(JSON.stringify(data));
-    } catch (err) {
-      // Fall through to local dummy plan
+      const text = await r.text();
+      // Expect Worker to return JSON; pass through as-is if ok
+      res.statusCode = r.status || 200;
+      res.setHeader("content-type", r.headers.get("content-type") || "application/json");
+      try {
+        const json = JSON.parse(text);
+        res.end(JSON.stringify(json));
+      } catch {
+        // If Worker returned text, wrap it
+        res.end(JSON.stringify({ ok: r.ok, data: text }));
+      }
+      return;
+    } catch {
+      // fall through to local plan
     }
   }
 
-  // Local dummy plan (keeps UI functional until Worker is wired)
+  // Local dummy plan
   const modules = Array.from({ length: decidedCount }).map((_, i) => ({
     title: `Module ${i + 1}`,
     outcomes: makeOutcomes(experienceTypes),
@@ -72,23 +88,24 @@ module.exports = async (req, res) => {
       experienceTypes,
       orgName,
       audience,
-      overviewPreview: overview.slice(0, 120),
+      overviewPreview: overview.slice(0, 160),
+      filesCount: files.length,
     },
   };
 
   res.statusCode = 200;
   res.setHeader("content-type", "application/json");
   res.end(JSON.stringify(out));
-};
+}
 
 function makeOutcomes(experienceTypes = []) {
   const base = [
-    "Apply the critical skill in a realistic scenario within 5 minutes.",
-    "Complete all required steps using all checklist items.",
-    "Identify common errors and select the correct response.",
-    "Demonstrate the workflow end-to-end with all required fields present.",
-    "Record the action using the required system form fields.",
-    "Choose the correct path for a given situation within 3 attempts.",
+    "Apply the skill in a realistic scenario within 5 minutes.",
+    "Complete the workflow end-to-end with required fields.",
+    "Identify common errors and choose the correct response.",
+    "Demonstrate the process using provided job aids.",
+    "Select the correct path for a given situation.",
+    "Record the action in the required system form.",
   ];
   const n = Math.max(3, Math.min(6, 3 + Math.floor(Math.random() * 4)));
   const arr = [];
@@ -101,11 +118,11 @@ function makeOutcomes(experienceTypes = []) {
 
 function readJson(req) {
   return new Promise((resolve) => {
-    let data = "";
-    req.on("data", (chunk) => (data += chunk));
+    let buf = "";
+    req.on("data", (c) => (buf += c));
     req.on("end", () => {
       try {
-        resolve(JSON.parse(data || "{}"));
+        resolve(JSON.parse(buf || "{}"));
       } catch {
         resolve({});
       }
