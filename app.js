@@ -1,4 +1,4 @@
-// app.js — planner form wiring to /api/plan
+// app.js — planner form wired to /api/plan
 document.addEventListener("DOMContentLoaded", () => {
   const orgName = document.getElementById("orgName");
   const overview = document.getElementById("overview");
@@ -12,19 +12,31 @@ document.addEventListener("DOMContentLoaded", () => {
 
   let files = [];
 
-  // Drag & drop
-  dropZone?.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.style.background = "#f5f5f5"; });
-  dropZone?.addEventListener("dragleave", () => { dropZone.style.background = "transparent"; });
-  dropZone?.addEventListener("drop", (e) => { e.preventDefault(); dropZone.style.background = "transparent"; handleFiles(e.dataTransfer.files); });
-  fileInput?.addEventListener("change", (e) => handleFiles(e.target.files));
+  // Drag and drop
+  dropZone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    dropZone.style.background = "#f5f5f5";
+  });
+  dropZone.addEventListener("dragleave", () => {
+    dropZone.style.background = "transparent";
+  });
+  dropZone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dropZone.style.background = "transparent";
+    handleFiles(e.dataTransfer.files);
+  });
+
+  fileInput.addEventListener("change", (e) => {
+    handleFiles(e.target.files);
+  });
 
   function handleFiles(list) {
-    files = [...files, ...Array.from(list || [])];
+    const arr = Array.from(list || []);
+    files = [...files, ...arr];
     renderFileList();
   }
 
   function renderFileList() {
-    if (!fileList) return;
     fileList.innerHTML = "";
     files.forEach((f, i) => {
       const li = document.createElement("li");
@@ -33,37 +45,41 @@ document.addEventListener("DOMContentLoaded", () => {
       btn.textContent = "remove";
       btn.type = "button";
       btn.style.cursor = "pointer";
-      btn.addEventListener("click", () => { files.splice(i, 1); renderFileList(); });
+      btn.addEventListener("click", () => {
+        files.splice(i, 1);
+        renderFileList();
+      });
       li.appendChild(btn);
       fileList.appendChild(li);
     });
   }
 
-  launchBtn?.addEventListener("click", async () => {
-    const experienceTypes = Array.from(document.querySelectorAll('input[name="lx"]:checked')).map(el => el.value);
-    const countValue = (moduleCount?.value || "").trim();
-
+  launchBtn.addEventListener("click", async () => {
+    const checked = Array.from(document.querySelectorAll("input[name=lx]:checked")).map(
+      (el) => el.value
+    );
+    const countValue = (moduleCount.value || "").trim();
     const payload = {
-      orgName: orgName?.value || "",
-      overview: overview?.value || "",
-      audience: audience?.value || "",
+      orgName: orgName.value || "",
+      overview: overview.value || "",
+      audience: audience.value || "",
       requestedModuleCount: countValue === "" ? null : Math.max(1, parseInt(countValue, 10) || 1),
-      experienceTypes,
-      // TODO: wire real uploads to /api/upload; send names for now
-      files: files.map(f => ({ name: f.name }))
+      experienceTypes: checked,
+      // Placeholder until upload wiring
+      files: files.map((f) => ({ name: f.name })),
     };
 
-    results.innerHTML = "Generating...";
+    results.textContent = "Generating...";
     try {
       const resp = await fetch("/api/plan", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       });
       if (!resp.ok) throw new Error("API error " + resp.status);
       const data = await resp.json();
       renderPlan(data);
-    } catch (e) {
+    } catch (err) {
       results.textContent = "Error generating plan.";
     }
   });
