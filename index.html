@@ -1,14 +1,16 @@
+
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>Instructional Design Assistant</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- Set your Worker URL -->
+
+  <!-- Worker URL: paste yours exactly on the next line -->
   <script>
-    // Example: https://id-assistant.jasons-c51.workers.dev
     window.CF_WORKER_URL = "https://id-assistant.jasons-c51.workers.dev";
   </script>
+
   <style>
     :root{--bg:#f6f7f9;--fg:#111;--muted:#666;--card:#fff;--bd:#ddd;--accent:#111}
     *{box-sizing:border-box}
@@ -34,7 +36,7 @@
 <body>
   <header>
     <h1 style="margin:0">Instructional Design Assistant</h1>
-    <div class="small">Outputs: <strong>Course</strong> then <strong>Outcomes</strong>.</div>
+    <div class="small">Output format: <strong>Course</strong> then <strong>Outcomes</strong>.</div>
   </header>
 
   <main>
@@ -87,9 +89,8 @@
     </section>
   </main>
 
-  <!-- Single-file logic -->
   <script>
-  // ---- transport (no external files required) ----
+  // ---- transport (no external imports) ----
   (function(){
     async function postJSON(url, body, { signal } = {}) {
       const res = await fetch(url, {
