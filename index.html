@@ -1,210 +1,61 @@
-
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
+  <meta charset="UTF-8">
   <title>Instructional Design Assistant</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-
-  <!-- Worker URL: paste yours exactly on the next line -->
-  <script>
-    window.CF_WORKER_URL = "https://id-assistant.jasons-c51.workers.dev";
-  </script>
-
-  <style>
-    :root{--bg:#f6f7f9;--fg:#111;--muted:#666;--card:#fff;--bd:#ddd;--accent:#111}
-    *{box-sizing:border-box}
-    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--fg)}
-    header{background:var(--accent);color:#fff;padding:16px 20px}
-    main{max-width:1100px;margin:24px auto;padding:0 20px}
-    .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:16px}
-    .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-    label{display:block;font-weight:600;margin:0 0 6px}
-    input,textarea,button{width:100%;padding:10px;border:1px solid #ccc;border-radius:10px;font-size:14px}
-    textarea{min-height:110px}
-    .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
-    .btn{cursor:pointer;border:1px solid var(--accent);border-radius:10px}
-    .btn.primary{background:var(--accent);color:#fff}
-    .btn.secondary{background:#fff;color:var(--accent)}
-    .small{font-size:12px;color:var(--muted)}
-    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap}
-    .msg{margin:8px 0;color:#222}
-    .msg.bad{color:#a00}
-    ul{margin:6px 0 0 18px}
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 </head>
 <body>
-  <header>
-    <h1 style="margin:0">Instructional Design Assistant</h1>
-    <div class="small">Output format: <strong>Course</strong> then <strong>Outcomes</strong>.</div>
-  </header>
+  <section id="planner" style="max-width:900px;margin:24px auto;padding:16px;display:grid;gap:16px;">
+    <h1 style="margin:0;">Instructional Design Planner</h1>
 
-  <main>
-    <form id="ida-form" class="card">
-      <h2 style="margin-top:0">Inputs</h2>
+    <label>
+      <div style="font-weight:600;">Organization Name</div>
+      <input id="orgName" type="text" style="width:100%;padding:8px;" placeholder="Acme Corp">
+    </label>
 
-      <div class="row">
-        <div>
-          <label for="projectTitle">Course Title</label>
-          <input id="projectTitle" name="projectTitle" type="text" placeholder="e.g., International Security Awareness Refresher" />
-        </div>
-        <div>
-          <label for="modules">Number of Modules</label>
-          <input id="modules" name="modules" type="number" min="0" value="0" />
-          <div class="small">Use 0 to let AI decide.</div>
-        </div>
+    <label>
+      <div style="font-weight:600;">Overview</div>
+      <textarea id="overview" rows="5" style="width:100%;padding:8px;" placeholder="Project summary, goals, constraints"></textarea>
+    </label>
+
+    <label>
+      <div style="font-weight:600;">Number of Modules <span style="font-weight:400;">(leave blank for AI)</span></div>
+      <input id="moduleCount" type="number" min="1" style="width:240px;padding:8px;">
+    </label>
+
+    <div>
+      <div style="font-weight:600;">Learning Experience Types</div>
+      <div style="display:grid;gap:8px;margin-top:8px;">
+        <label><input type="checkbox" name="lx" value="Live Session"> Live Session</label>
+        <label><input type="checkbox" name="lx" value="Coaching/Mentoring"> Coaching/Mentoring</label>
+        <label><input type="checkbox" name="lx" value="eLearning"> eLearning</label>
+        <label><input type="checkbox" name="lx" value="Software Simulation"> Software Simulation</label>
+        <label><input type="checkbox" name="lx" value="Practical Application Activities"> Practical Application Activities</label>
       </div>
+    </div>
 
-      <div class="row">
-        <div>
-          <label for="audience">Audience</label>
-          <textarea id="audience" name="audience" placeholder="Roles, context, prior knowledge."></textarea>
-        </div>
-        <div>
-          <label for="goals">Business Goals</label>
-          <textarea id="goals" name="goals" placeholder="Behavior or performance you want to improve."></textarea>
-        </div>
+    <label>
+      <div style="font-weight:600;">Audience</div>
+      <input id="audience" type="text" style="width:100%;padding:8px;" placeholder="Who will be trained">
+    </label>
+
+    <div>
+      <div style="font-weight:600;margin-bottom:8px;">Upload presentations, documents, PDFs</div>
+      <div id="dropZone" style="border:2px dashed #999;padding:24px;text-align:center;">
+        Drag files here
+        <div style="margin:12px 0;">or</div>
+        <label style="display:inline-block;padding:8px 12px;border:1px solid #ccc;cursor:pointer;">
+          Choose files
+          <input id="fileInput" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.txt" style="display:none;">
+        </label>
       </div>
+      <ul id="fileList" style="margin-top:12px;padding-left:16px;"></ul>
+    </div>
 
-      <div>
-        <label for="constraints">Constraints</label>
-        <textarea id="constraints" name="constraints" placeholder="Time limits, tools, compliance, delivery format, etc."></textarea>
-      </div>
+    <button id="launchBtn" style="padding:10px 16px;font-weight:600;">Launch AI Assistant</button>
 
-      <div class="actions">
-        <button type="button" class="btn secondary" id="btn-clear">Clear</button>
-        <button type="button" class="btn primary" id="aiBtn">Launch AI Instructional Designer</button>
-      </div>
-
-      <div id="aiMsg" class="msg"></div>
-    </form>
-
-    <section id="output" class="card" aria-live="polite">
-      <h2 style="margin-top:0">Result</h2>
-      <div id="aiResult"></div>
-      <details style="margin-top:10px">
-        <summary>Raw JSON</summary>
-        <pre id="raw" class="mono">{}</pre>
-      </details>
-    </section>
-  </main>
-
-  <script>
-  // ---- transport (no external imports) ----
-  (function(){
-    async function postJSON(url, body, { signal } = {}) {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-        signal
-      });
-      const ct = res.headers.get("content-type") || "";
-      const isJson = ct.includes("application/json");
-      const data = isJson ? await res.json().catch(()=>null) : await res.text();
-      if (!res.ok) {
-        const msg =
-          (isJson && data && data.error && (data.error.message || data.error.code)) ||
-          (isJson && data && data.message) || ("HTTP " + res.status);
-        const e = new Error(msg); e.status = res.status; e.response = data; throw e;
-      }
-      return data;
-    }
-    window.runAIDraft = async function runAIDraft(payload, { signal } = {}) {
-      if (!window.CF_WORKER_URL) throw new Error("CF_WORKER_URL not set");
-      const res = await postJSON(window.CF_WORKER_URL + "/answer", payload, { signal });
-      const draftText = res?.data?.draft ?? res?.draft ?? res?.data ?? "";
-      if (typeof draftText !== "string" || !draftText.trim()) throw new Error("Empty model response");
-      return draftText;
-    };
-  })();
-
-  // ---- helpers ----
-  function $(sel){ return document.querySelector(sel); }
-  function byId(id){ return document.getElementById(id); }
-  function val(el){ return el ? ("value" in el ? (el.value||"").trim() : (el.textContent||"").trim()) : ""; }
-  function escapeHtml(s){ return String(s).replace(/[&<>"]/g,c=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c])); }
-  function setMsg(t,bad=false){ const m=byId("aiMsg"); if(m){ m.textContent=t; m.className="msg"+(bad?" bad":""); } }
-
-  // ---- payload ----
-  function buildPayload(){
-    const fields = {
-      projectTitle: val(byId("projectTitle")),
-      audience: val(byId("audience")),
-      goals: val(byId("goals")),
-      constraints: val(byId("constraints")),
-      modules: parseInt(val(byId("modules"))||"0",10)||0
-    };
-
-    const prompt =
-`ROLE: Instructional Design assistant.
-TASK: Return STRICT JSON only. No markdown. No prose.
-FORMAT: { "modules": [ { "name": "Module name", "outcomes": ["Outcome 1","Outcome 2","Outcome 3"] } ] }
-RULES:
-- If user_modules > 0, return exactly user_modules modules.
-- If user_modules = 0, choose a sensible number of modules.
-- Each module must have 3-6 outcomes.
-- Ban the words "understand" and "understanding".
-- Outcomes must be observable and measurable without percentages.
-
-AUDIENCE: ${fields.audience || "TBD"}
-GOALS: ${fields.goals || "TBD"}
-CONSTRAINTS: ${fields.constraints || "TBD"}
-USER_MODULES: ${fields.modules}`;
-
-    return { prompt, fields };
-  }
-
-  // ---- parse + transform ----
-  function parseJson(text){
-    try { return typeof text === "string" ? JSON.parse(text) : text; } catch(_) {}
-    const m = String(text||"").match(/\{[\s\S]*\}$/); if(!m) throw new Error("AI returned non-JSON");
-    return JSON.parse(m[0]);
-  }
-  function toCourseOutcomes(obj){
-    const mods = Array.isArray(obj.modules) ? obj.modules : [];
-    const outs = [];
-    for(const m of mods){
-      if(Array.isArray(m?.outcomes)){
-        for(const o of m.outcomes){ if(typeof o==="string" && o.trim()) outs.push(o.trim()); }
-      }
-    }
-    const title = val(byId("projectTitle")) || "Course Plan";
-    return { course: title, outcomes: outs.length ? outs : ["Explain the escalation path using approved terms"] };
-  }
-
-  // ---- render ----
-  function render(result){
-    const box = byId("aiResult");
-    box.innerHTML = `
-      <div class="card" style="margin-top:12px">
-        <h2 style="margin:0 0 8px 0">Course</h2>
-        <div>${escapeHtml(result.course)}</div>
-        <h2 style="margin:16px 0 8px 0">Outcomes</h2>
-        <ul>${result.outcomes.map(o=>`<li>${escapeHtml(o)}</li>`).join("")}</ul>
-      </div>
-    `;
-    byId("raw").textContent = JSON.stringify({ course: result.course, outcomes: result.outcomes }, null, 2);
-  }
-
-  // ---- main ----
-  async function launchAI(){
-    setMsg("Launching AI…");
-    const payload = buildPayload();
-    const draftText = await window.runAIDraft(payload);
-    const obj = parseJson(draftText);
-    const result = toCourseOutcomes(obj);
-    render(result);
-    setMsg("AI done.");
-  }
-
-  // ---- wire UI ----
-  window.addEventListener("DOMContentLoaded", () => {
-    const btn = byId("aiBtn");
-    const clr = byId("btn-clear");
-    if (btn) btn.addEventListener("click", (e)=>{ e.preventDefault(); launchAI().catch(err=>{ console.error(err); setMsg("AI error: " + (err?.message||err), true); }); });
-    if (clr) clr.addEventListener("click", (e)=>{ e.preventDefault(); byId("ida-form").reset(); setMsg(""); byId("aiResult").innerHTML=""; byId("raw").textContent="{}"; });
-  });
-  </script>
+    <div id="results" style="margin-top:16px;"></div>
+  </section>
 </body>
 </html>
