@@ -1,368 +1,121 @@
-<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Learning Strategy Assistant — Submit</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
-    <style>
-      :root { --bg:#0b1020; --panel:#121830; --muted:#8a93a6; --text:#e6eaf3; --border:#1c2445; --accent:#2b5cff }
-      *{box-sizing:border-box}
-      body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text)}
-      header{display:flex;gap:12px;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border);position:sticky;top:0;background:rgba(11,16,32,.75);backdrop-filter:saturate(120%) blur(8px)}
-      h1{font-size:16px;margin:0;font-weight:600;color:#b8c2e0}
-      main{max-width:980px;margin:22px auto;padding:0 18px}
-      .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:18px}
-      label{display:block;margin:12px 0 6px 2px;color:#9fb0d8;font-size:13px}
-      input,textarea,select{width:100%;background:#0f1530;border:1px solid #202a52;color:var(--text);padding:10px 12px;border-radius:10px}
-      textarea{min-height:120px;resize:vertical}
-      .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-      .row3{display:grid;grid-template-columns:2fr 2fr 1fr;gap:12px}
-      .btns{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:center}
-      .badge{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;border:1px solid #2a3566;background:#11183a;color:#cbd5ff;font-size:12px}
-      .lint{margin-top:8px;font:12px ui-monospace, Menlo, monospace;color:#9fb0d8}
-      .lint.bad{color:#fca5a5}
-      button{background:#1b2350;border:1px solid #2a3566;color:#e6eaf3;padding:10px 14px;border-radius:10px;cursor:pointer}
-      button[disabled]{opacity:.6;cursor:not-allowed}
-      .msg{margin-top:12px;font:12px ui-monospace, Menlo, monospace;color:#9fb0d8}
-      .msg.bad{color:#fca5a5}
-      .small{font-size:12px;color:#8a93a6}
-      a.link{color:#a6c0ff;text-decoration:none}
+<script>
+// Override AI launch to parse JSON and render "Course → Outcomes".
+(function(){
+  // 1) Hook the button
+  const aiBtn = document.getElementById('aiBtn');
+  if(!aiBtn){ console.warn('aiBtn not found'); return; }
+  aiBtn.onclick = handleAiLaunch;
 
-      /* Uploader */
-      .uploader-title{display:flex;align-items:center;gap:8px;margin-top:16px}
-      .uploader-title b{font-weight:600}
-      .drop{margin-top:8px;border:3px dashed #2b5cff;border-radius:16px;padding:24px;display:flex;gap:12px;align-items:center;justify-content:center;min-height:180px;background:#0f1530}
-      .drop.drag{border-color:#6f8cff;background:#0f1530aa}
-      .drop button{background:#18204a;border:1px dashed #2a3566}
-      .files{margin-top:12px;display:grid;gap:8px}
-      .file{display:flex;align-items:center;gap:10px;background:#0f1530;border:1px solid #202a52;border-radius:10px;padding:8px 10px}
-      .file a{color:#a6c0ff;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:520px}
-      .file .meta{font:12px ui-monospace,Menlo,monospace;color:#9fb0d8}
-      .file .rm{margin-left:auto;background:transparent;border:1px solid #2a3566}
-      progress{width:140px;height:8px}
+  // 2) Small helpers
+  const $ = (id)=>document.getElementById(id);
+  function text(id){ const el=$(id); return el ? el.value?.trim?.() || el.textContent?.trim?.() || '' : ''; }
+  function setMsg(t,bad=false){
+    const m=document.getElementById('msg') || document.createElement('div');
+    m.id='msg'; m.className='msg'+(bad?' bad':''); m.textContent=t;
+    if(!m.parentNode){ (document.body || document.documentElement).appendChild(m); }
+  }
 
-      /* AI sections */
-      .section-title{display:flex;align-items:center;justify-content:space-between;margin-top:16px}
-      .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-      .group{border:1px solid #1c2445;background:#0f1530;border-radius:12px;padding:12px}
-      .group h3{margin:0 0 8px 0;font-size:14px;color:#cbd5ff}
-      .mini{font-size:12px;color:#9fb0d8;margin:0 0 6px 0}
-      .rmBtn{background:transparent;border-color:#2a3566;margin-left:auto}
-    </style>
-  </head>
-  <body>
-    <header>
-      <h1>Learning Strategy Assistant — Submit</h1>
-    </header>
-    <main>
-      <div class="card">
-        <p class="small">Fill this out, optionally add files, use <b>Launch AI Instructional Designer</b> to generate Outcomes/Modules (edit as needed), then click <b>Submit</b>. Your entry appears on the <a class="link" href="/admin.html" target="_blank">Admin Dashboard</a>.</p>
+  // 3) Build payload from your existing inputs (adjust IDs if your page uses different ones)
+  function buildPayload(){
+    // Gather what you already collect on the page
+    const fields = {
+      audience: text('audience'),
+      constraints: text('constraints'),
+      goals: text('goals') || text('summary') || '',
+      modules: Number(document.getElementById('modules')?.value || 0) || 0
+    };
+    // Include a prompt if your Worker expects it; otherwise fields alone is fine
+    const prompt =
+`ROLE: Instructional Design assistant
+TASK: Return STRICT JSON only. No markdown. No prose.
+FORMAT: { "modules": [ { "name": "Module name", "outcomes": ["Outcome 1","Outcome 2","Outcome 3"] } ] }
+RULES:
+- If user_modules > 0, return exactly user_modules modules.
+- If user_modules = 0, choose a sensible number of modules.
+- Each module must have 3-6 outcomes.
+- Ban the words "understand" and "understanding".
+- Outcomes must be observable and measurable without percentages.
 
-        <!-- Basic org/contact -->
-        <form id="f">
-          <label for="org">Organization <span class="small">(required)</span></label>
-          <input id="org" placeholder="Acme Corp" required />
+AUDIENCE: ${fields.audience || 'TBD'}
+CONSTRAINTS: ${fields.constraints || 'TBD'}
+GOALS: ${fields.goals || 'TBD'}
+USER_MODULES: ${fields.modules}`;
 
-          <div class="row">
-            <div>
-              <label for="name">Contact name</label>
-              <input id="name" placeholder="Jordan Lee" />
-            </div>
-            <div>
-              <label for="email">Contact email <span class="small">(optional)</span></label>
-              <input id="email" placeholder="jordan@example.com" />
-            </div>
-          </div>
+    return { prompt, fields };
+  }
 
-          <label for="summary">Summary</label>
-          <textarea id="summary" placeholder="Brief overview of the learning need or context…"></textarea>
+  // 4) Parse model text safely → object
+  function toJson(draftText){
+    if (typeof draftText === 'object' && draftText !== null) return draftText;
+    let s = String(draftText || '').trim();
+    // Try direct parse
+    try { return JSON.parse(s); } catch(_) {}
+    // Try extracting last JSON block
+    const m = s.match(/\{[\s\S]*\}$/);
+    if(m){ try { return JSON.parse(m[0]); } catch(_) {} }
+    throw new Error('AI returned non-JSON text');
+  }
 
-          <!-- AI Designer controls -->
-          <div class="row3">
-            <div>
-              <label for="audience">Audience</label>
-              <input id="audience" placeholder="e.g., New Customer Success Managers" />
-            </div>
-            <div>
-              <label for="constraints">Constraints</label>
-              <input id="constraints" placeholder="e.g., 60-min modules, remote-first" />
-            </div>
-            <div>
-              <label>Counts</label>
-              <div class="row" style="grid-template-columns:1fr 1fr;gap:8px">
-                <input id="numOutcomes" type="number" min="1" max="8" value="3" title="#Outcomes" />
-                <input id="numModules"  type="number" min="1" max="12" value="4" title="#Modules" />
-              </div>
-              <div class="small" style="margin-top:4px">#Outcomes · #Modules</div>
-            </div>
-          </div>
-
-          <div class="btns">
-            <button type="button" id="aiBtn">Launch AI Instructional Designer</button>
-            <span id="groundingBadge" class="badge" style="display:none"></span>
-          </div>
-          <div id="lintMsg" class="lint" style="display:none"></div>
-
-          <!-- Uploader -->
-          <div class="uploader-title">
-            <b>Files (optional)</b>
-            <span class="small">PDF, Word, images, etc.</span>
-          </div>
-          <div id="drop" class="drop">
-            <div>
-              <div style="text-align:center; margin-bottom:8px;">Drag &amp; drop files here</div>
-              <div style="display:flex;gap:10px;justify-content:center">
-                <button type="button" id="chooseBtn">Choose files</button>
-                <input type="file" id="fileInput" style="display:none" multiple />
-              </div>
-            </div>
-          </div>
-          <div id="files" class="files"></div>
-
-          <!-- Outcomes / Modules editors -->
-          <div class="section-title">
-            <h2 style="margin:18px 0 0 0;font-size:16px;color:#b8c2e0">Outcomes</h2>
-            <button class="rmBtn" type="button" id="addOutcomeBtn">+ Add outcome</button>
-          </div>
-          <div id="outcomesWrap" class="grid2"></div>
-
-          <div class="section-title">
-            <h2 style="margin:18px 0 0 0;font-size:16px;color:#b8c2e0">Modules</h2>
-            <button class="rmBtn" type="button" id="addModuleBtn">+ Add module</button>
-          </div>
-          <div id="modulesWrap" class="grid2"></div>
-
-          <div class="btns">
-            <button id="submitBtn" type="submit">Submit</button>
-            <a class="link" href="/admin.html" target="_blank" style="align-self:center">Open Admin</a>
-          </div>
-        </form>
-
-        <div id="msg" class="msg">Ready.</div>
-      </div>
-    </main>
-
-    <script>
-      const $ = (id)=>document.getElementById(id);
-      const setMsg = (t,bad=false)=>{ const m=$('msg'); m.textContent=t; m.className='msg'+(bad?' bad':''); };
-      function fmtSize(n){ if(n<1024) return n+' B'; if(n<1024*1024) return (n/1024).toFixed(1)+' KB'; return (n/1024/1024).toFixed(1)+' MB'; }
-
-      const state = { files: [], outcomes: [], modules: [] };
-
-      // Uploader
-      function showFiles(){
-        const wrap = $('files');
-        if(!state.files.length){ wrap.innerHTML = ''; return; }
-        wrap.innerHTML = '<div class="small" style="margin-left:2px;">Uploaded files</div>' + 
-          state.files.map((f,i)=>`
-          <div class="file">
-            <a href="${f.url}" target="_blank" title="${f.name}">${f.name}</a>
-            <span class="meta">${fmtSize(f.size||0)}</span>
-            <button class="rm" type="button" onclick="removeFile(${i})">Remove</button>
-          </div>
-        `).join('');
-      }
-      window.removeFile = (i)=>{ state.files.splice(i,1); showFiles(); };
-
-      async function uploadOne(file){
-        const temp = document.createElement('div');
-        temp.className = 'file';
-        temp.innerHTML = `<span>${file.name}</span><progress max="100" value="25"></progress><span class="meta">${fmtSize(file.size)}</span>`;
-        $('files').appendChild(temp);
-
-        try{
-          const res = await fetch('/api/upload?filename='+encodeURIComponent(file.name), {
-            method: 'POST',
-            headers: { 'content-type': file.type || 'application/octet-stream' },
-            body: file
-          });
-          if(!res.ok){
-            const t = await res.text().catch(()=>res.statusText);
-            setMsg('Upload failed: '+t, true);
-            temp.remove();
-            return;
-          }
-          const data = await res.json();
-          state.files.push({ url: data.url, name: file.name, size: file.size||0 });
-          temp.remove();
-          showFiles();
-        }catch(e){
-          temp.remove();
-          setMsg('Upload error: '+(e?.message||e), true);
+  // 5) Convert modules → Course + Outcomes list
+  function toCourseOutcomes(obj){
+    const mods = Array.isArray(obj.modules) ? obj.modules : [];
+    const outcomes = [];
+    for(const m of mods){
+      if (Array.isArray(m?.outcomes)) {
+        for (const o of m.outcomes) {
+          if (typeof o === 'string' && o.trim()) outcomes.push(o.trim());
         }
       }
+    }
+    // Fallback if empty
+    if(!outcomes.length) outcomes.push('Define success criteria using approved template');
+    return {
+      course: (document.getElementById('projectTitle')?.value || 'Course Plan').trim() || 'Course Plan',
+      outcomes
+    };
+  }
 
-      function handleFiles(files){
-        setMsg('Uploading '+files.length+' file(s)…');
-        const list = Array.from(files || []);
-        (async ()=>{ for(const f of list) await uploadOne(f); setMsg('Uploads complete.'); })();
-      }
-      function setupDragAndDrop(){
-        const box = $('drop');
-        box.addEventListener('dragover', (e)=>{ e.preventDefault(); box.classList.add('drag'); });
-        box.addEventListener('dragleave', ()=> box.classList.remove('drag'));
-        box.addEventListener('drop', (e)=>{
-          e.preventDefault(); box.classList.remove('drag');
-          if(e.dataTransfer?.files?.length){ handleFiles(e.dataTransfer.files); }
-        });
-      }
+  // 6) Render into your existing UI
+  function renderCourseOutcomes(result){
+    // Try to use existing areas if present; otherwise create a simple display.
+    const containerId = 'aiResult';
+    let box = document.getElementById(containerId);
+    if(!box){
+      box = document.createElement('div');
+      box.id = containerId;
+      // Place under your existing results area if present
+      const anchor = document.querySelector('#aiOutput, #render, .card, main') || document.body;
+      anchor.appendChild(box);
+    }
+    box.innerHTML = `
+      <div class="card" style="margin-top:12px">
+        <h2 style="margin:0 0 8px 0">Course</h2>
+        <div>${escapeHtml(result.course)}</div>
+        <h2 style="margin:16px 0 8px 0">Outcomes</h2>
+        <ul>${result.outcomes.map(o=>`<li>${escapeHtml(o)}</li>`).join('')}</ul>
+      </div>
+    `;
+  }
 
-      // Editors
-      function renderOutcomes(){
-        const wrap = $('outcomesWrap');
-        if(!state.outcomes.length){ wrap.innerHTML = '<div class="small">No outcomes yet. Click “+ Add outcome” or use the AI Designer.</div>'; return; }
-        wrap.innerHTML = state.outcomes.map((o, i)=>`
-          <div class="group outcome" data-idx="${i}">
-            <h3>Outcome ${i+1}</h3>
-            <p class="mini">Behaviors: one per line</p>
-            <input class="o-title" placeholder="Title" value="${(o.title||'').replace(/"/g,'&quot;')}" />
-            <textarea class="o-desc" placeholder="Description">${o.description||''}</textarea>
-            <textarea class="o-beh" placeholder="Behavior 1\nBehavior 2\nBehavior 3">${(o.behaviors||[]).join('\\n')}</textarea>
-            <div class="btns">
-              <button type="button" class="rmBtn" onclick="removeOutcome(${i})">Remove</button>
-            </div>
-          </div>
-        `).join('');
-      }
-      function renderModules(){
-        const wrap = $('modulesWrap');
-        if(!state.modules.length){ wrap.innerHTML = '<div class="small">No modules yet. Click “+ Add module” or use the AI Designer.</div>'; return; }
-        wrap.innerHTML = state.modules.map((m, i)=>`
-          <div class="group module" data-idx="${i}">
-            <h3>Module ${i+1}</h3>
-            <p class="mini">Activities: one per line</p>
-            <input class="m-title" placeholder="Title" value="${(m.title||'').replace(/"/g,'&quot;')}" />
-            <input class="m-obj"   placeholder="Objective" value="${(m.objective||'').replace(/"/g,'&quot;')}" />
-            <textarea class="m-act" placeholder="Activity 1\nActivity 2\nActivity 3">${(m.activities||[]).join('\\n')}</textarea>
-            <div class="btns">
-              <button type="button" class="rmBtn" onclick="removeModule(${i})">Remove</button>
-            </div>
-          </div>
-        `).join('');
-      }
-      window.removeOutcome = (i)=>{ state.outcomes.splice(i,1); renderOutcomes(); };
-      window.removeModule  = (i)=>{ state.modules.splice(i,1);  renderModules();  };
-      function addOutcome(){ state.outcomes.push({ title:'', description:'', behaviors:[] }); renderOutcomes(); }
-      function addModule(){  state.modules.push({ title:'', objective:'', activities:[] });  renderModules();  }
-      function readEditorsIntoState(){
-        const outs = Array.from(document.querySelectorAll('.outcome'));
-        state.outcomes = outs.map(card => ({
-          title: card.querySelector('.o-title').value.trim(),
-          description: card.querySelector('.o-desc').value.trim(),
-          behaviors: card.querySelector('.o-beh').value.split('\n').map(s=>s.trim()).filter(Boolean)
-        }));
-        const mods = Array.from(document.querySelectorAll('.module'));
-        state.modules = mods.map(card => ({
-          title: card.querySelector('.m-title').value.trim(),
-          objective: card.querySelector('.m-obj').value.trim(),
-          activities: card.querySelector('.m-act').value.split('\n').map(s=>s.trim()).filter(Boolean)
-        }));
-      }
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"]/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+  }
 
-      function showGrounding(grounding){
-        const el = $('groundingBadge');
-        if (!grounding || !Number.isFinite(grounding.docCount)) { el.style.display='none'; return; }
-        el.textContent = `Grounded in ${grounding.docCount} doc${grounding.docCount===1?'':'s'}`;
-        el.style.display = 'inline-flex';
-      }
-      function showLint(lint){
-        const el = $('lintMsg');
-        if (!Array.isArray(lint) || !lint.length) { el.style.display='none'; return; }
-        const problems = lint.filter(r => (r.issues||[]).length).length;
-        if (!problems) { el.style.display='none'; return; }
-        el.textContent = `${problems} outcome(s) needed tweaks to meet Behavioral/Specific/Measurable/Concise rules.`;
-        el.className = 'lint bad';
-        el.style.display = 'block';
-      }
-
-      // AI
-      async function launchAI(){
-        const organization = $('org').value.trim();
-        const summary = $('summary').value.trim();
-        const audience = $('audience').value.trim();
-        const constraints = $('constraints').value.trim();
-        const numOutcomes = parseInt($('numOutcomes').value || '3', 10);
-        const numModules  = parseInt($('numModules').value  || '4', 10);
-        if(!organization && !summary){ setMsg('Enter at least Organization or Summary for better AI results.', true); return; }
-
-        try{
-          $('aiBtn').disabled = true;
-          setMsg('Generating draft with AI…');
-          const res = await fetch('/api/draft', {
-            method:'POST',
-            headers:{ 'content-type':'application/json' },
-            body: JSON.stringify({ organization, summary, audience, constraints, numOutcomes, numModules })
-          });
-          if(!res.ok){ setMsg('AI error: ' + (await res.text().catch(()=>res.statusText)), true); return; }
-          const data = await res.json();
-          const d = data?.draft || {};
-          state.outcomes = Array.isArray(d.outcomes) ? d.outcomes : [];
-          state.modules  = Array.isArray(d.modules) ? d.modules  : [];
-          renderOutcomes(); renderModules();
-          showGrounding(data?.grounding);
-          showLint(data?.lint);
-          setMsg('Draft loaded. Review and edit as needed, then Submit.');
-        }catch(e){ setMsg('AI request failed: ' + (e?.message||e), true); }
-        finally{ $('aiBtn').disabled = false; }
-      }
-
-      // Submit
-      async function submitForm(e){
-        e.preventDefault();
-        const org = $('org').value.trim();
-        if(!org){ setMsg('Organization is required.', true); $('org').focus(); return; }
-
-        const payload = {
-          organization: org,
-          contact_name: $('name').value.trim(),
-          contact_email: $('email').value.trim(),
-          summary: $('summary').value.trim(),
-          audience: $('audience').value.trim(),
-          constraints: $('constraints').value.trim(),
-          goals: $('goals').value.trim(),
-          timeline: $('timeline').value.trim(),
-          success_metrics: $('metrics').value.trim(),
-          notes: $('notes').value.trim(),
-          outcomes: (readEditorsIntoState(), state.outcomes),
-          modules: state.modules,
-          files: state.files.map(f=>f.url)
-        };
-
-        try{
-          $('submitBtn').disabled = true;
-          setMsg('Submitting…');
-          const res = await fetch('/api/submit', {
-            method:'POST',
-            headers:{ 'content-type':'application/json' },
-            body: JSON.stringify(payload)
-          });
-          if(!res.ok){ setMsg('Submit failed: ' + (await res.text().catch(()=>res.statusText)), true); return; }
-          const data = await res.json();
-          setMsg(`Saved! ID: ${data.id}.  View it in Admin →`, false);
-          const a = document.createElement('a'); a.textContent='Open Admin'; a.href='/admin.html'; a.target='_blank'; a.className='link';
-          $('msg').appendChild(document.createTextNode(' ')); $('msg').appendChild(a);
-          $('f').reset(); state.files=[]; state.outcomes=[]; state.modules=[]; showFiles(); renderOutcomes(); renderModules();
-        }catch(e){ setMsg('Submit error: ' + (e?.message||e), true); }
-        finally{ $('submitBtn').disabled = false; }
-      }
-
-      window.addEventListener('DOMContentLoaded', ()=>{
-        $('chooseBtn').addEventListener('click', ()=> $('fileInput').click());
-        $('fileInput').addEventListener('change', (e)=> handleFiles(e.target.files));
-        setupDragAndDrop();
-        $('aiBtn').addEventListener('click', launchAI);
-        $('addOutcomeBtn').addEventListener('click', ()=>{ addOutcome(); setMsg('Added an outcome.'); });
-        $('addModuleBtn').addEventListener('click', ()=>{ addModule(); setMsg('Added a module.'); });
-        $('f').addEventListener('submit', submitForm);
-        renderOutcomes(); renderModules();
-      });
-    </script>
-
-    <!-- shims -->
-    <script src="/draft-grounding-shim.js" defer></script>
-    <script src="/download-docx-shim.js" defer></script>
-  </body>
-</html>
+  // 7) Main click handler
+  async function handleAiLaunch(){
+    try{
+      setMsg('Launching AI…');
+      const payload = buildPayload();
+      // runAIDraft is provided by api/draft.js we installed earlier
+      const draftText = await window.runAIDraft(payload);
+      const obj = toJson(draftText);
+      const result = toCourseOutcomes(obj);
+      renderCourseOutcomes(result);
+      setMsg('AI done.');
+    }catch(e){
+      console.error(e);
+      setMsg('AI error: ' + (e?.message || e), true);
+    }
+  }
+})();
+</script>
