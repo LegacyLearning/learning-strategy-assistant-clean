@@ -4,10 +4,10 @@
   <meta charset="utf-8" />
   <title>AI Instructional Designer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- 1) SET YOUR WORKER URL -->
+  <!-- SET YOUR WORKER URL -->
   <script>
     // Example: "https://id-assistant.jasons-c51.workers.dev"
-    window.CF_WORKER_URL = "https://YOUR-WORKER-URL";
+    window.CF_WORKER_URL = "https://id-assistant.jasons-c51.workers.dev";
   </script>
   <style>
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:0;background:#f7f7f7}
@@ -65,6 +65,66 @@
         </div>
       </div>
 
+      <!-- More Inputs section -->
+      <div class="card" style="margin-top:12px">
+        <h3>More Inputs</h3>
+
+        <div class="row">
+          <div>
+            <label for="projectTitle">Project Title</label>
+            <input id="projectTitle" name="projectTitle" type="text" placeholder="e.g., Security Awareness Refresher" />
+          </div>
+          <div>
+            <label for="duration">Total Duration</label>
+            <input id="duration" name="duration" type="text" placeholder="e.g., 45 minutes total or 3 x 15 min" />
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label for="deliveryMode">Delivery Mode</label>
+            <input id="deliveryMode" name="deliveryMode" type="text" placeholder="e.g., eLearning, VILT, blended" />
+          </div>
+          <div>
+            <label for="prerequisites">Prerequisites</label>
+            <input id="prerequisites" name="prerequisites" type="text" placeholder="e.g., completed Security 101" />
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label for="assessments">Assessments</label>
+            <textarea id="assessments" name="assessments" placeholder="Quizzes, performance tasks, checklists, etc."></textarea>
+          </div>
+          <div>
+            <label for="resources">Resources / Materials</label>
+            <textarea id="resources" name="resources" placeholder="Job aids, SOP links, templates"></textarea>
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label for="stakeholders">Key Stakeholders</label>
+            <input id="stakeholders" name="stakeholders" type="text" placeholder="e.g., HR, Safety, Store Ops" />
+          </div>
+          <div>
+            <label for="successCriteria">Success Criteria</label>
+            <input id="successCriteria" name="successCriteria" type="text" placeholder="e.g., all checklist items complete" />
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label for="courseDescription">Course Description</label>
+            <textarea id="courseDescription" name="courseDescription" placeholder="Short overview to appear in catalog"></textarea>
+          </div>
+          <div>
+            <label for="contactEmail">Contact Email</label>
+            <input id="contactEmail" name="contactEmail" type="email" placeholder="name@company.com" />
+          </div>
+        </div>
+      </div>
+
       <div class="actions" style="margin-top:12px">
         <button type="button" class="secondary" id="btn-clear">Clear</button>
         <button type="button" class="primary" id="btn-generate">Generate</button>
@@ -86,7 +146,6 @@
     </section>
   </main>
 
-  <!-- 2) APP CODE -->
   <script src="./api/draft.js"></script>
   <script src="./app.js"></script>
 </body>
