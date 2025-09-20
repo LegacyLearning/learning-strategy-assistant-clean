@@ -1,6 +1,6 @@
 // api/plan.js
 // POST only. If CF_WORKER_URL is set, proxy to <CF_WORKER_URL>/answer.
-// Otherwise return a local dummy plan so the UI works immediately.
+// Falls back to a local plan on any error OR non-2xx from the Worker.
 
 export const config = { runtime: "nodejs" };
 
@@ -28,13 +28,14 @@ export default async function handler(req, res) {
       : 4;
 
   const BASE = (process.env.CF_WORKER_URL || "").trim();
-  const TOKEN = (
-    process.env.API_BEARER_TOKEN ||
-    process.env.CF_WORKER_TOKEN ||
-    process.env.WORKER_API_KEY ||
-    process.env.ADMIN_TOKEN ||
-    ""
-  ).trim();
+  const TOKEN =
+    (
+      process.env.API_BEARER_TOKEN ||
+      process.env.CF_WORKER_TOKEN ||
+      process.env.WORKER_API_KEY ||
+      process.env.ADMIN_TOKEN ||
+      ""
+    ).trim();
 
   // Try proxy to Worker if configured
   if (BASE) {
@@ -53,21 +54,24 @@ export default async function handler(req, res) {
         headers.authorization = `Bearer ${TOKEN}`;
         headers["x-api-key"] = TOKEN;
       }
+
       const r = await fetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
       });
+
+      // If Worker is not OK, force local fallback
+      if (!r.ok) throw new Error(`WORKER_${r.status}`);
+
       const text = await r.text();
-      // Expect Worker to return JSON; pass through as-is if ok
-      res.statusCode = r.status || 200;
+      res.statusCode = 200;
       res.setHeader("content-type", r.headers.get("content-type") || "application/json");
       try {
         const json = JSON.parse(text);
         res.end(JSON.stringify(json));
       } catch {
-        // If Worker returned text, wrap it
-        res.end(JSON.stringify({ ok: r.ok, data: text }));
+        res.end(JSON.stringify({ ok: true, data: text }));
       }
       return;
     } catch {
@@ -110,9 +114,7 @@ function makeOutcomes(experienceTypes = []) {
   const n = Math.max(3, Math.min(6, 3 + Math.floor(Math.random() * 4)));
   const arr = [];
   for (let i = 0; i < n; i++) arr.push(base[i % base.length]);
-  if (experienceTypes.length) {
-    arr[0] = `Align activities with: ${experienceTypes.join(", ")}.`;
-  }
+  if (experienceTypes.length) arr[0] = `Align activities with: ${experienceTypes.join(", ")}.`;
   return arr;
 }
 
