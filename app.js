@@ -1,34 +1,28 @@
-// app.js — planner form wired to /api/plan
+// app.js — planner form wired to /api/plan and /api/export
 document.addEventListener("DOMContentLoaded", () => {
   const orgName = document.getElementById("orgName");
   const overview = document.getElementById("overview");
   const moduleCount = document.getElementById("moduleCount");
   const audience = document.getElementById("audience");
   const launchBtn = document.getElementById("launchBtn");
+  const exportBtn = document.getElementById("exportBtn");
   const results = document.getElementById("results");
   const fileInput = document.getElementById("fileInput");
   const fileList = document.getElementById("fileList");
   const dropZone = document.getElementById("dropZone");
 
   let files = [];
+  let exportPayload = null; // built after plan generation
 
   // Drag and drop
-  dropZone.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    dropZone.style.background = "#f5f5f5";
-  });
-  dropZone.addEventListener("dragleave", () => {
-    dropZone.style.background = "transparent";
-  });
+  dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.style.background = "#f5f5f5"; });
+  dropZone.addEventListener("dragleave", () => { dropZone.style.background = "transparent"; });
   dropZone.addEventListener("drop", (e) => {
     e.preventDefault();
     dropZone.style.background = "transparent";
     handleFiles(e.dataTransfer.files);
   });
-
-  fileInput.addEventListener("change", (e) => {
-    handleFiles(e.target.files);
-  });
+  fileInput.addEventListener("change", (e) => handleFiles(e.target.files));
 
   function handleFiles(list) {
     const arr = Array.from(list || []);
@@ -45,20 +39,19 @@ document.addEventListener("DOMContentLoaded", () => {
       btn.textContent = "remove";
       btn.type = "button";
       btn.style.cursor = "pointer";
-      btn.addEventListener("click", () => {
-        files.splice(i, 1);
-        renderFileList();
-      });
+      btn.addEventListener("click", () => { files.splice(i, 1); renderFileList(); });
       li.appendChild(btn);
       fileList.appendChild(li);
     });
   }
 
   launchBtn.addEventListener("click", async () => {
-    const checked = Array.from(document.querySelectorAll("input[name=lx]:checked")).map(
-      (el) => el.value
-    );
+    exportBtn.disabled = true;
+    exportPayload = null;
+
+    const checked = Array.from(document.querySelectorAll('input[name="lx"]:checked')).map(el => el.value);
     const countValue = (moduleCount.value || "").trim();
+
     const payload = {
       orgName: orgName.value || "",
       overview: overview.value || "",
@@ -66,7 +59,7 @@ document.addEventListener("DOMContentLoaded", () => {
       requestedModuleCount: countValue === "" ? null : Math.max(1, parseInt(countValue, 10) || 1),
       experienceTypes: checked,
       // Placeholder until upload wiring
-      files: files.map((f) => ({ name: f.name })),
+      files: files.map(f => ({ name: f.name }))
     };
 
     results.textContent = "Generating...";
@@ -76,11 +69,60 @@ document.addEventListener("DOMContentLoaded", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!resp.ok) throw new Error("API error " + resp.status);
+      if (!resp.ok) throw new Error("API " + resp.status);
       const data = await resp.json();
       renderPlan(data);
-    } catch (err) {
+
+      // Build export payload for /api/export (maps to lib/export/docx.js)
+      exportPayload = {
+        organization: payload.orgName,
+        summary: payload.overview,
+        notes: payload.experienceTypes?.length ? `Learning experience types: ${payload.experienceTypes.join(", ")}` : "",
+        audience: payload.audience,
+        modules: Array.isArray(data.modules)
+          ? data.modules.map((m, i) => ({
+              title: m.title || `Module ${i + 1}`,
+              // Put outcomes into activities list for the DOCX template
+              activities: Array.isArray(m.outcomes) ? m.outcomes : []
+            }))
+          : []
+      };
+      exportBtn.disabled = false;
+    } catch (e) {
       results.textContent = "Error generating plan.";
+    }
+  });
+
+  exportBtn.addEventListener("click", async () => {
+    if (!exportPayload) return;
+    exportBtn.disabled = true;
+    const oldLabel = exportBtn.textContent;
+    exportBtn.textContent = "Exporting…";
+    try {
+      const resp = await fetch("/api/export", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(exportPayload),
+      });
+      if (!resp.ok) throw new Error("Export " + resp.status);
+      const blob = await resp.blob();
+      const disposition = resp.headers.get("Content-Disposition") || "";
+      const m = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(disposition);
+      const filename = m && m[1] ? decodeURIComponent(m[1]) : (exportPayload.organization || "learning_strategy_draft") + ".docx";
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert("Export failed. Please try again.");
+    } finally {
+      exportBtn.textContent = oldLabel;
+      exportBtn.disabled = false;
     }
   });
 
