@@ -4,40 +4,28 @@
   <meta charset="UTF-8">
   <title>Instructional Design Assistant</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    :root { --gap:16px }
-    body { font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin:0; }
-    #planner { max-width:900px; margin:24px auto; padding:16px; display:grid; gap:var(--gap); }
-    label { display:block; font-weight:600; }
-    input[type="text"], input[type="number"], textarea { width:100%; padding:8px; }
-    .row { display:flex; gap:8px; }
-    .btn { padding:10px 16px; font-weight:600; cursor:pointer; }
-    .btn[disabled] { opacity:.6; cursor:not-allowed; }
-    #dropZone { border:2px dashed #999; padding:24px; text-align:center; }
-    #fileList { margin-top:12px; padding-left:16px; }
-  </style>
 </head>
 <body>
-  <section id="planner">
+  <section id="planner" style="max-width:900px;margin:24px auto;padding:16px;display:grid;gap:16px;">
     <h1 style="margin:0;">Instructional Design Planner</h1>
 
     <label>
-      <div>Organization Name</div>
-      <input id="orgName" type="text" placeholder="Acme Corp">
+      <div style="font-weight:600;">Organization Name</div>
+      <input id="orgName" type="text" style="width:100%;padding:8px;" placeholder="Acme Corp">
     </label>
 
     <label>
-      <div>Overview</div>
-      <textarea id="overview" rows="5" placeholder="Project summary, goals, constraints"></textarea>
+      <div style="font-weight:600;">Overview</div>
+      <textarea id="overview" rows="5" style="width:100%;padding:8px;" placeholder="Project summary, goals, constraints"></textarea>
     </label>
 
     <label>
-      <div>Number of Modules <span style="font-weight:400;">(leave blank for AI)</span></div>
-      <input id="moduleCount" type="number" min="1">
+      <div style="font-weight:600;">Number of Modules <span style="font-weight:400;">(leave blank for AI)</span></div>
+      <input id="moduleCount" type="number" min="1" style="width:240px;padding:8px;">
     </label>
 
     <div>
-      <div>Learning Experience Types</div>
+      <div style="font-weight:600;">Learning Experience Types</div>
       <div style="display:grid;gap:8px;margin-top:8px;">
         <label><input type="checkbox" name="lx" value="Live Session"> Live Session</label>
         <label><input type="checkbox" name="lx" value="Coaching/Mentoring"> Coaching/Mentoring</label>
@@ -48,13 +36,13 @@
     </div>
 
     <label>
-      <div>Audience</div>
-      <input id="audience" type="text" placeholder="Who will be trained">
+      <div style="font-weight:600;">Audience</div>
+      <input id="audience" type="text" style="width:100%;padding:8px;" placeholder="Who will be trained">
     </label>
 
     <div>
-      <div style="margin-bottom:8px;">Upload presentations, documents, PDFs</div>
-      <div id="dropZone">
+      <div style="font-weight:600;margin-bottom:8px;">Upload presentations, documents, PDFs</div>
+      <div id="dropZone" style="border:2px dashed #999;padding:24px;text-align:center;">
         Drag files here
         <div style="margin:12px 0;">or</div>
         <label style="display:inline-block;padding:8px 12px;border:1px solid #ccc;cursor:pointer;">
@@ -62,17 +50,12 @@
           <input id="fileInput" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.txt" style="display:none;">
         </label>
       </div>
-      <ul id="fileList"></ul>
+      <ul id="fileList" style="margin-top:12px;padding-left:16px;"></ul>
     </div>
 
-    <div class="row">
-      <button id="launchBtn" class="btn">Launch AI Assistant</button>
-      <button id="exportBtn" class="btn" disabled>Export as Word</button>
-    </div>
+    <button id="launchBtn" style="padding:10px 16px;font-weight:600;">Launch AI Assistant</button>
 
-    <div id="results" style="margin-top:8px;"></div>
+    <div id="results" style="margin-top:16px;"></div>
   </section>
-
-  <script src="app.js" defer></script>
 </body>
 </html>
