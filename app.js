@@ -10,7 +10,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const dropZone = $("dropZone");
   const filePicker = $("filePicker");
 
-  // state
   let files = [];
 
   // drag & drop
@@ -125,7 +124,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const payload = collectForm(urls);
 
-      // Call your Worker via proxy route /api/plan, which targets Worker /answer then falls back. :contentReference[oaicite:1]{index=1}
       launchBtn.textContent = "Drafting…";
       const res = await fetch("/api/plan", {
         method: "POST",
@@ -134,7 +132,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
 
-      const plan = await res.json(); // expect { modules:[...], ... } from backend
+      const plan = await res.json(); // expect { modules:[...], meta:{...} }
       renderPlan(plan);
     } catch (e) {
       results.innerHTML = `<div style="color:#b00">Error: ${String(e?.message || e)}</div>`;
