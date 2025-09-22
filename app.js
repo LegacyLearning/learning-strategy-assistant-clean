@@ -65,7 +65,6 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function getExperienceTypes() {
-    // index.html uses name="lx" on the checkboxes
     return Array.from(document.querySelectorAll('input[name="lx"]:checked')).map(el => el.value);
   }
 
@@ -112,8 +111,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const blob = await res.blob();
     const disp = res.headers.get("Content-Disposition");
     const fallback = "learning_strategy_draft.docx";
-    const m = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(disp || "");
-    const filename = m && m[1] ? decodeURIComponent(m[1]).replace(/^"+|"+$/g, "") : fallback;
+    const m = /filename\*?=(?:UTF-8''|")?([^\";]+)/i.exec(disp || "");
+    const filename = m && m[1] ? decodeURIComponent(m[1]).replace(/^\"+|\"+$/g, "") : fallback;
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
