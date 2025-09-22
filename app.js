@@ -1,26 +1,28 @@
+// app.js — uploads → /api/plan → render → /api/export
 document.addEventListener("DOMContentLoaded", () => {
   const $ = (id) => document.getElementById(id);
+
   const orgName = $("orgName");
   const overview = $("overview");
   const moduleCount = $("moduleCount");
   const audience = $("audience");
   const launchBtn = $("launchBtn");
   const results = $("results");
+  const fileInput = $("fileInput");
   const fileList = $("fileList");
   const dropZone = $("dropZone");
-  const filePicker = $("filePicker");
 
   let files = [];
 
-  // drag & drop
-  dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.classList.add("hover"); });
-  dropZone.addEventListener("dragleave", () => dropZone.classList.remove("hover"));
+  // drag & drop wiring
+  dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.style.background = "#f5f5f5"; });
+  dropZone.addEventListener("dragleave", () => { dropZone.style.background = "transparent"; });
   dropZone.addEventListener("drop", (e) => {
     e.preventDefault();
-    dropZone.classList.remove("hover");
+    dropZone.style.background = "transparent";
     if (e.dataTransfer?.files?.length) handleFiles(Array.from(e.dataTransfer.files));
   });
-  filePicker.addEventListener("change", (e) => {
+  fileInput.addEventListener("change", (e) => {
     if (e.target.files?.length) handleFiles(Array.from(e.target.files));
   });
 
@@ -28,6 +30,7 @@ document.addEventListener("DOMContentLoaded", () => {
     files = [...files, ...list];
     renderFileList();
   }
+
   function renderFileList() {
     fileList.innerHTML = "";
     files.forEach((f, i) => {
@@ -62,7 +65,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function getExperienceTypes() {
-    return Array.from(document.querySelectorAll('input[name="experienceType"]:checked')).map(el => el.value);
+    // index.html uses name="lx" on the checkboxes
+    return Array.from(document.querySelectorAll('input[name="lx"]:checked')).map(el => el.value);
   }
 
   function collectForm(fileUrls) {
@@ -77,13 +81,15 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
+  function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
   function renderPlan(plan) {
     const mods = Array.isArray(plan?.modules) ? plan.modules : [];
     if (!mods.length) { results.innerHTML = "<div>No modules returned.</div>"; return; }
     results.innerHTML = `
       <h2>Draft plan</h2>
       ${mods.map((m, i) => `
-        <section class="module">
+        <section class="module" style="margin:12px 0;padding:10px;border:1px solid #ddd;border-radius:8px">
           <h3>${i + 1}. ${escapeHtml(m.title || "Module")}</h3>
           ${m.objective ? `<p><strong>Objective:</strong> ${escapeHtml(m.objective)}</p>` : ""}
           ${Array.isArray(m.outcomes) ? `<ol>${m.outcomes.map(o => `<li>${escapeHtml(String(o))}</li>`).join("")}</ol>` : ""}
@@ -113,8 +119,6 @@ document.addEventListener("DOMContentLoaded", () => {
     a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
   }
-
-  function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
   launchBtn.addEventListener("click", async () => {
     try {
