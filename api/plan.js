@@ -1,10 +1,7 @@
-// api/plan.js — ESM, Node 20, proxy to Worker with optional auth, fallback on error
-export const config = { runtime: "nodejs20.x" };
+// api/plan.js — ESM proxy to Worker with optional auth; fallback on error
 
-const WORKER_BASE_URL =
-  process.env.WORKER_BASE_URL || process.env.CF_WORKER_URL || "";
-const API_BEARER_TOKEN =
-  process.env.API_BEARER_TOKEN || process.env.CF_WORKER_TOKEN || "";
+const WORKER_BASE_URL = process.env.WORKER_BASE_URL || process.env.CF_WORKER_URL || "";
+const API_BEARER_TOKEN = process.env.API_BEARER_TOKEN || process.env.CF_WORKER_TOKEN || "";
 const CF_ACCESS_CLIENT_ID = process.env.CF_ACCESS_CLIENT_ID || "";
 const CF_ACCESS_CLIENT_SECRET = process.env.CF_ACCESS_CLIENT_SECRET || "";
 
@@ -56,7 +53,11 @@ export default async function handler(req, res) {
   }
 
   // Fallback dummy plan
-  const decided = payload.requestedModuleCount || 3;
+  const decided =
+    Number.isInteger(payload.requestedModuleCount) && payload.requestedModuleCount > 0
+      ? payload.requestedModuleCount
+      : 3;
+
   const baseOutcomes = [
     "Apply the skill in a realistic scenario within 5 minutes.",
     "Complete the workflow end-to-end with required fields.",
@@ -65,19 +66,29 @@ export default async function handler(req, res) {
     "Verify all checklist items are complete.",
     "Escalate edge cases according to policy.",
   ];
+
+  const prefix =
+    Array.isArray(payload.experienceTypes) && payload.experienceTypes.length
+      ? [`Align activities with: ${payload.experienceTypes.join(", ")}.`]
+      : [];
+
   const modules = Array.from({ length: decided }).map((_, i) => ({
     title: `Module ${i + 1}`,
-    outcomes: baseOutcomes.slice(0, 6).slice(0, Math.max(3, Math.min(6, 6))),
+    outcomes: prefix.concat(baseOutcomes).slice(0, 6),
   }));
-  res.status(200).json({
-    modules,
-    meta: {
-      decidedModuleCount: decided,
-      experienceTypes: payload.experienceTypes || [],
-      orgName: payload.orgName || "",
-      audience: payload.audience || "",
-      overviewPreview: (payload.overview || "").slice(0, 120),
-      source: "fallback",
-    },
-  });
+
+  res.setHeader("content-type", "application/json");
+  res.status(200).send(
+    JSON.stringify({
+      modules,
+      meta: {
+        decidedModuleCount: decided,
+        experienceTypes: payload.experienceTypes || [],
+        orgName: payload.orgName || "",
+        audience: payload.audience || "",
+        overviewPreview: (payload.overview || "").slice(0, 120),
+        source: "fallback",
+      },
+    })
+  );
 }
