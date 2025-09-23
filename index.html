@@ -1,32 +1,33 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>Instructional Design Assistant</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- REQUIRED: set your Worker base URL (no trailing slash) -->
+  <script>
+    window.CF_WORKER_URL = "https://REPLACE-ME.workers.dev";
+  </script>
+
   <style>
-    body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:0;padding:24px;background:#fafafa}
-    #app{max-width:900px;margin:0 auto;display:grid;gap:16px}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#fafafa}
+    #planner{max-width:960px;margin:24px auto;padding:16px;display:grid;gap:16px}
     label{display:block}
     input,textarea{width:100%;padding:8px}
     button{padding:10px 16px;font-weight:600;cursor:pointer}
-    .msg{margin-top:8px}
-    .bad{color:#a00}
     .card{background:#fff;border:1px solid #ddd;border-radius:8px;padding:16px}
     .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .msg{min-height:20px}
+    .bad{color:#a00}
   </style>
-  <script>
-    // REQUIRED: point this at your Cloudflare Worker base URL (no trailing slash)
-    // Example: https://your-worker.example.workers.dev
-    window.CF_WORKER_URL = "https://REPLACE-ME.workers.dev";
-  </script>
-  <!-- Load the helper that defines window.runAIDraft -->
+
+  <!-- Load helper that defines window.runAIDraft BEFORE app.js -->
   <script src="api/draft.js"></script>
-  <!-- App logic comes after the helper -->
   <script src="app.js" defer></script>
 </head>
 <body>
-  <main id="app">
+  <main id="planner">
     <h1 style="margin:0;">Instructional Design Planner</h1>
 
     <label>
@@ -40,7 +41,7 @@
     </label>
 
     <label>
-      <div style="font-weight:600;">Number of Modules <span style="font-weight:400;">(leave blank for AI)</span></div>
+      <div style="font-weight:600;">Number of Modules (leave blank for AI)</div>
       <input id="moduleCount" type="number" min="1" style="width:240px;">
     </label>
 
@@ -64,7 +65,7 @@
     <div id="aiMsg" class="msg"></div>
 
     <section class="card" aria-live="polite">
-      <h2 style="margin-top:0">Result</h2>
+      <h2 style="margin:0 0 8px 0;">Result</h2>
       <div id="results"></div>
       <details style="margin-top:10px">
         <summary>Raw JSON</summary>
