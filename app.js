@@ -1,33 +1,35 @@
-// app.js — uploads → /api/plan → render → /api/export
+// app.js
 document.addEventListener("DOMContentLoaded", () => {
-  const $ = (id) => document.getElementById(id);
-
-  const orgName = $("orgName");
-  const overview = $("overview");
-  const moduleCount = $("moduleCount");
-  const audience = $("audience");
-  const launchBtn = $("launchBtn");
-  const results = $("results");
-  const fileInput = $("fileInput");
-  const fileList = $("fileList");
-  const dropZone = $("dropZone");
+  const orgName = document.getElementById("orgName");
+  const overview = document.getElementById("overview");
+  const moduleCount = document.getElementById("moduleCount");
+  const audience = document.getElementById("audience");
+  const launchBtn = document.getElementById("launchBtn");
+  const results = document.getElementById("results");
+  const fileInput = document.getElementById("fileInput");
+  const fileList = document.getElementById("fileList");
+  const dropZone = document.getElementById("dropZone");
 
   let files = [];
 
-  // drag & drop wiring
-  dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.style.background = "#f5f5f5"; });
-  dropZone.addEventListener("dragleave", () => { dropZone.style.background = "transparent"; });
+  // ---------- drag & drop ----------
+  dropZone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    dropZone.style.background = "#f5f5f5";
+  });
+  dropZone.addEventListener("dragleave", () => {
+    dropZone.style.background = "transparent";
+  });
   dropZone.addEventListener("drop", (e) => {
     e.preventDefault();
     dropZone.style.background = "transparent";
-    if (e.dataTransfer?.files?.length) handleFiles(Array.from(e.dataTransfer.files));
+    handleFiles(e.dataTransfer.files);
   });
-  fileInput.addEventListener("change", (e) => {
-    if (e.target.files?.length) handleFiles(Array.from(e.target.files));
-  });
+  fileInput.addEventListener("change", (e) => handleFiles(e.target.files));
 
   function handleFiles(list) {
-    files = [...files, ...list];
+    const arr = Array.from(list);
+    files = [...files, ...arr];
     renderFileList();
   }
 
@@ -39,109 +41,88 @@ document.addEventListener("DOMContentLoaded", () => {
       const btn = document.createElement("button");
       btn.textContent = "remove";
       btn.type = "button";
-      btn.addEventListener("click", () => { files.splice(i, 1); renderFileList(); });
+      btn.style.cursor = "pointer";
+      btn.addEventListener("click", () => {
+        files.splice(i, 1);
+        renderFileList();
+      });
       li.appendChild(btn);
       fileList.appendChild(li);
     });
   }
 
-  async function uploadOne(file) {
-    const res = await fetch("/api/upload?filename=" + encodeURIComponent(file.name), {
-      method: "POST",
-      headers: { "content-type": file.type || "application/octet-stream" },
-      body: file
-    });
-    if (!res.ok) throw new Error("upload_failed");
-    const data = await res.json();
-    if (!data?.url) throw new Error("no_url_from_upload");
-    return data.url;
-  }
-
-  async function uploadAll() {
-    if (!files.length) return [];
-    const urls = [];
-    for (const f of files) urls.push(await uploadOne(f));
-    return urls;
-  }
-
-  function getExperienceTypes() {
-    return Array.from(document.querySelectorAll('input[name="lx"]:checked')).map(el => el.value);
-  }
-
-  function collectForm(fileUrls) {
-    const v = (moduleCount.value || "").trim();
-    return {
-      orgName: orgName.value.trim(),
-      overview: overview.value.trim(),
-      audience: audience.value.trim(),
-      requestedModuleCount: v ? Number(v) : null,
-      experienceTypes: getExperienceTypes(),
-      files: fileUrls || []
-    };
-  }
-
-  function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-
-  function renderPlan(plan) {
-    const mods = Array.isArray(plan?.modules) ? plan.modules : [];
-    if (!mods.length) { results.innerHTML = "<div>No modules returned.</div>"; return; }
-    results.innerHTML = `
-      <h2>Draft plan</h2>
-      ${mods.map((m, i) => `
-        <section class="module" style="margin:12px 0;padding:10px;border:1px solid #ddd;border-radius:8px">
-          <h3>${i + 1}. ${escapeHtml(m.title || "Module")}</h3>
-          ${m.objective ? `<p><strong>Objective:</strong> ${escapeHtml(m.objective)}</p>` : ""}
-          ${Array.isArray(m.outcomes) ? `<ol>${m.outcomes.map(o => `<li>${escapeHtml(String(o))}</li>`).join("")}</ol>` : ""}
-        </section>
-      `).join("")}
-      <div style="margin-top:16px">
-        <button id="exportBtn">Export as Word</button>
-      </div>
-    `;
-    $("exportBtn").onclick = () => exportDocx(plan);
-  }
-
-  async function exportDocx(plan) {
-    const res = await fetch("/api/export", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(plan)
-    });
-    if (!res.ok) { alert("Export failed"); return; }
-    const blob = await res.blob();
-    const disp = res.headers.get("Content-Disposition");
-    const fallback = "learning_strategy_draft.docx";
-    const m = /filename\*?=(?:UTF-8''|")?([^\";]+)/i.exec(disp || "");
-    const filename = m && m[1] ? decodeURIComponent(m[1]).replace(/^\"+|\"+$/g, "") : fallback;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-  }
-
+  // ---------- AI launch ----------
   launchBtn.addEventListener("click", async () => {
+    // collect
+    const checked = Array.from(document.querySelectorAll("input[name=lx]:checked")).map(
+      (el) => el.value
+    );
+    const countValue = (moduleCount.value || "").trim();
+    const fields = {
+      orgName: (orgName.value || "").trim(),
+      overview: (overview.value || "").trim(),
+      audience: (audience.value || "").trim(),
+      requestedModuleCount: countValue === "" ? 0 : parseInt(countValue, 10) || 0,
+      experienceTypes: checked,
+      files: files.map((f) => f.name) // placeholder; implement real upload later
+    };
+
+    const prompt =
+`ROLE: Instructional Design assistant.
+TASK: Return STRICT JSON only. No markdown. No prose.
+FORMAT: { "modules": [ { "name": "Module name", "outcomes": ["Outcome 1","Outcome 2","Outcome 3"] } ] }
+RULES:
+- If requestedModuleCount > 0, return exactly that many modules.
+- Each module has 3–6 outcomes.
+- Use Bloom action verbs. Ban "understand"/"understanding".
+- Outcomes must be observable and measurable without percentages.
+
+CONTEXT:
+ORG_NAME: ${fields.orgName || "TBD"}
+AUDIENCE: ${fields.audience || "TBD"}
+OVERVIEW: ${fields.overview || "TBD"}
+USER_REQUESTED_MODULES: ${fields.requestedModuleCount}`;
+
+    // show loading
+    results.innerHTML = `<div>Launching AI…</div>`;
+
     try {
-      launchBtn.disabled = true;
-      launchBtn.textContent = "Uploading…";
-      const urls = await uploadAll();
+      // call Cloudflare Worker via api/draft.js helper
+      const draftText = await window.runAIDraft({ prompt, fields });
 
-      const payload = collectForm(urls);
+      // parse JSON strictly; fallback to extracting last JSON block
+      let obj;
+      try {
+        obj = JSON.parse(draftText);
+      } catch {
+        const m = draftText.match(/\{[\s\S]*\}$/);
+        if (!m) throw new Error("Model did not return JSON");
+        obj = JSON.parse(m[0]);
+      }
 
-      launchBtn.textContent = "Drafting…";
-      const res = await fetch("/api/plan", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
+      // render both a quick view and raw JSON
+      const mods = Array.isArray(obj.modules) ? obj.modules : [];
+      const quick = [
+        `<h3 style="margin:0 0 8px 0">Modules</h3>`,
+        `<ol>`,
+        ...mods.map(m => `<li><b>${escapeHtml(m.name||"Untitled")}</b><ul>${
+          Array.isArray(m.outcomes) ? m.outcomes.map(o=>`<li>${escapeHtml(String(o))}</li>`).join("") : ""
+        }</ul></li>`),
+        `</ol>`
+      ].join("");
 
-      const plan = await res.json(); // expect { modules:[...], meta:{...} }
-      renderPlan(plan);
-    } catch (e) {
-      results.innerHTML = `<div style="color:#b00">Error: ${String(e?.message || e)}</div>`;
-    } finally {
-      launchBtn.disabled = false;
-      launchBtn.textContent = "Launch AI Assistant";
+      results.innerHTML = `
+        <div>${quick}</div>
+        <h3>Raw JSON</h3>
+        <pre>${escapeHtml(JSON.stringify(obj, null, 2))}</pre>
+      `;
+    } catch (err) {
+      console.error(err);
+      results.innerHTML = `<div style="color:#a00">AI error: ${escapeHtml(err?.message || String(err))}</div>`;
     }
   });
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
 });
