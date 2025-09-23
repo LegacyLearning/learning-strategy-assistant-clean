@@ -5,7 +5,7 @@
   <title>Instructional Design Assistant</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <!-- REQUIRED: set your Worker base URL (no trailing slash) -->
+  <!-- REQUIRED: set your Cloudflare Worker base URL (no trailing slash) -->
   <script>
     window.CF_WORKER_URL = "https://REPLACE-ME.workers.dev";
   </script>
@@ -22,7 +22,7 @@
     .bad{color:#a00}
   </style>
 
-  <!-- Load helper that defines window.runAIDraft BEFORE app.js -->
+  <!-- Load helper BEFORE app.js -->
   <script src="api/draft.js"></script>
   <script src="app.js" defer></script>
 </head>
