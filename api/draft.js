@@ -1,64 +1,33 @@
 // api/draft.js
-// Exposes a single global helper the UI can call.
-// Works with a Cloudflare Worker at window.CF_WORKER_URL.
-// Expected Worker responses:
-//   { ok: true, data: { draft: "<STRICT JSON STRING>" } }
-//   { draft: "<STRICT JSON STRING>" }
-//   { ok: true, data: "<STRICT JSON STRING>" }
-
 (function () {
-  function must(url) {
-    if (!url) throw new Error("CF_WORKER_URL is not set in index.html");
-  }
+  const base = () => {
+    const url = (window && window.CF_WORKER_URL) || "";
+    if (!url) throw new Error("CF_WORKER_URL is not set on window");
+    return url.replace(/\/+$/,""); // trim trailing slash
+  };
 
-  async function postJSON(url, body, { signal } = {}) {
+  async function postToWorker(path, body) {
+    const url = base() + path;
     const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      signal,
+      body: JSON.stringify(body || {})
     });
-    const ctype = res.headers.get("content-type") || "";
-    const isJson = ctype.includes("application/json");
-    const data = isJson ? await res.json().catch(() => null) : await res.text();
-
     if (!res.ok) {
-      const msg =
-        (isJson && data && data.error && (data.error.message || data.error.code)) ||
-        (isJson && data && data.message) ||
-        `HTTP ${res.status}`;
-      const err = new Error(msg);
-      err.status = res.status;
-      err.response = data;
-      throw err;
+      const text = await res.text().catch(()=>String(res.status));
+      throw new Error("Worker error " + res.status + ": " + text);
     }
-    return data;
+    return res.text();
   }
 
-  // Main entry used by your UI code.
-  // `payload` can include any fields your page collects.
-  // Returns a string: the model’s raw draft text.
-  async function runAIDraft(payload, { signal } = {}) {
-    must(window.CF_WORKER_URL);
-    const res = await postJSON(`${window.CF_WORKER_URL}/answer`, payload, { signal });
-
-    // Accept common shapes
-    const draftText =
-      res?.data?.draft ?? // { ok:true, data: { draft: "..." } }
-      res?.draft ??       // { draft: "..." }
-      res?.data ??        // { ok:true, data: "..." }
-      "";
-
-    if (typeof draftText !== "string" || !draftText.trim()) {
-      throw new Error("Empty model response");
-    }
-    return draftText;
+  // High-level helper used by the UI
+  async function runAIDraft(payload) {
+    // Accepts { prompt, fields }
+    // Your Worker should read both and return a draft string
+    return postToWorker("/answer", payload);
   }
 
-  // Export globals so existing code can call them
-  window.postToWorker = async function (path, body, opts = {}) {
-    must(window.CF_WORKER_URL);
-    return postJSON(`${window.CF_WORKER_URL}${path}`, body, opts);
-  };
+  // Expose helpers
+  window.postToWorker = postToWorker;
   window.runAIDraft = runAIDraft;
 })();
