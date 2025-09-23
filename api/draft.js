@@ -1,10 +1,10 @@
 // api/draft.js
 (function () {
-  const base = () => {
-    const url = (window && window.CF_WORKER_URL) || "";
+  function base() {
+    const url = (typeof window !== "undefined" && window.CF_WORKER_URL) || "";
     if (!url) throw new Error("CF_WORKER_URL is not set on window");
-    return url.replace(/\/+$/,""); // trim trailing slash
-  };
+    return url.replace(/\/+$/,"");
+  }
 
   async function postToWorker(path, body) {
     const url = base() + path;
@@ -13,21 +13,29 @@
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body || {})
     });
+    let payloadText = "";
     if (!res.ok) {
-      const text = await res.text().catch(()=>String(res.status));
-      throw new Error("Worker error " + res.status + ": " + text);
+      try { payloadText = await res.text(); } catch {}
+      throw new Error("Worker error " + res.status + (payloadText ? (": " + payloadText) : ""));
     }
-    return res.text();
+    // Try JSON, then text
+    let data;
+    try { data = await res.json(); } catch { payloadText = await res.text(); }
+
+    if (typeof data === "string") return data;
+    if (data && typeof data === "object") {
+      const draft = data?.data?.draft ?? data?.draft ?? data?.data;
+      if (typeof draft === "string" && draft.trim()) return draft;
+    }
+    if (typeof payloadText === "string" && payloadText.trim()) return payloadText;
+
+    throw new Error("Empty model response");
   }
 
-  // High-level helper used by the UI
   async function runAIDraft(payload) {
-    // Accepts { prompt, fields }
-    // Your Worker should read both and return a draft string
     return postToWorker("/answer", payload);
   }
 
-  // Expose helpers
   window.postToWorker = postToWorker;
   window.runAIDraft = runAIDraft;
 })();
