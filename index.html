@@ -5,10 +5,8 @@
   <title>Instructional Design Assistant</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <!-- REQUIRED: set your Cloudflare Worker base URL (no trailing slash) -->
-  <script>
-    window.CF_WORKER_URL = "https://REPLACE-ME.workers.dev";
-  </script>
+  <!-- Worker base URL -->
+  <script>window.CF_WORKER_URL="https://id-assistant.jasons-c51.workers.dev";</script>
 
   <style>
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#fafafa}
@@ -22,8 +20,41 @@
     .bad{color:#a00}
   </style>
 
-  <!-- Load helper BEFORE app.js -->
-  <script src="api/draft.js"></script>
+  <!-- Inline helper: defines window.runAIDraft BEFORE app.js -->
+  <script>
+    (function(){
+      function base(){
+        const url = (typeof window!=="undefined" && window.CF_WORKER_URL) || "";
+        if(!url) throw new Error("CF_WORKER_URL is not set on window");
+        return url.replace(/\/+$/,"");
+      }
+      async function postJSON(url, body, {signal}={}){
+        const res = await fetch(url, {
+          method:"POST",
+          headers:{ "content-type":"application/json" },
+          body: JSON.stringify(body||{}),
+          signal
+        });
+        let txt = "";
+        if(!res.ok){
+          try{ txt = await res.text(); }catch{}
+          throw new Error("Worker error "+res.status+(txt?(": "+txt):""));
+        }
+        try{ return await res.json(); }catch{ return await res.text(); }
+      }
+      window.runAIDraft = async function runAIDraft(payload,{signal}={}){
+        const raw = await postJSON(base()+"/answer", payload, {signal});
+        if(typeof raw === "string" && raw.trim()) return raw;
+        if(raw && typeof raw === "object"){
+          const draft = raw?.data?.draft ?? raw?.draft ?? raw?.data;
+          if(typeof draft === "string" && draft.trim()) return draft;
+        }
+        throw new Error("Empty model response");
+      };
+    })();
+  </script>
+
+  <!-- Your app logic -->
   <script src="app.js" defer></script>
 </head>
 <body>
