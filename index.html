@@ -3,23 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <title>Instructional Design Assistant</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- Set your Cloudflare Worker base URL -->
+  <script>
+    // Example: https://id-assistant.your-subdomain.workers.dev
+    window.CF_WORKER_URL = "https://REPLACE_ME.workers.dev";
+  </script>
+
   <style>
-    body { font-family: system-ui, Arial, sans-serif; margin: 0; padding: 0; }
+    /* optional minor styles */
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     #planner { max-width: 900px; margin: 24px auto; padding: 16px; display: grid; gap: 16px; }
     #dropZone { border: 2px dashed #999; padding: 24px; text-align: center; }
-    #dropZone.hover { background: #f5f5f5; }
-    .module { margin: 12px 0; padding: 10px; border: 1px solid #ddd; border-radius: 8px; }
-    button { padding: 10px 16px; font-weight: 600; }
+    button { padding: 10px 16px; font-weight: 600; cursor: pointer; }
+    pre { background: #f6f7f9; padding: 12px; overflow: auto; }
   </style>
 </head>
 <body>
   <section id="planner">
-    <h1>Instructional Design Planner</h1>
+    <h1 style="margin:0;">Instructional Design Planner</h1>
 
     <label>
       <div style="font-weight:600;">Organization Name</div>
-      <input id="orgName" type="text" style="width:100%;padding:8px;" placeholder="Acme Corp" />
+      <input id="orgName" type="text" style="width:100%;padding:8px;" placeholder="Acme Corp">
     </label>
 
     <label>
@@ -28,24 +35,24 @@
     </label>
 
     <label>
-      <div style="font-weight:600;">Number of Modules <span style="font-weight:400;">(blank lets AI decide)</span></div>
-      <input id="moduleCount" type="number" min="1" style="width:240px;padding:8px;" />
+      <div style="font-weight:600;">Number of Modules <span style="font-weight:400;">(leave blank for AI)</span></div>
+      <input id="moduleCount" type="number" min="1" style="width:240px;padding:8px;">
     </label>
 
     <div>
       <div style="font-weight:600;">Learning Experience Types</div>
       <div style="display:grid;gap:8px;margin-top:8px;">
-        <label><input type="checkbox" name="experienceType" value="Live Session"> Live Session</label>
-        <label><input type="checkbox" name="experienceType" value="Coaching/Mentoring"> Coaching/Mentoring</label>
-        <label><input type="checkbox" name="experienceType" value="eLearning"> eLearning</label>
-        <label><input type="checkbox" name="experienceType" value="Software Simulation"> Software Simulation</label>
-        <label><input type="checkbox" name="experienceType" value="Practical Application Activities"> Practical Application Activities</label>
+        <label><input type="checkbox" name="lx" value="Live Session"> Live Session</label>
+        <label><input type="checkbox" name="lx" value="Coaching/Mentoring"> Coaching/Mentoring</label>
+        <label><input type="checkbox" name="lx" value="eLearning"> eLearning</label>
+        <label><input type="checkbox" name="lx" value="Software Simulation"> Software Simulation</label>
+        <label><input type="checkbox" name="lx" value="Practical Application Activities"> Practical Application Activities</label>
       </div>
     </div>
 
     <label>
       <div style="font-weight:600;">Audience</div>
-      <input id="audience" type="text" style="width:100%;padding:8px;" placeholder="Who will be trained" />
+      <input id="audience" type="text" style="width:100%;padding:8px;" placeholder="Who will be trained">
     </label>
 
     <div>
@@ -55,7 +62,7 @@
         <div style="margin:12px 0;">or</div>
         <label style="display:inline-block;padding:8px 12px;border:1px solid #ccc;cursor:pointer;">
           Choose files
-          <input id="filePicker" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.png,.jpg,.jpeg" style="display:none;" />
+          <input id="fileInput" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.txt" style="display:none;">
         </label>
       </div>
       <ul id="fileList" style="margin-top:12px;padding-left:16px;"></ul>
@@ -66,6 +73,8 @@
     <div id="results" style="margin-top:16px;"></div>
   </section>
 
-  <script src="app.js" defer></script>
+  <!-- Load the AI helper first, then your app -->
+  <script src="./api/draft.js"></script>
+  <script src="./app.js"></script>
 </body>
 </html>
