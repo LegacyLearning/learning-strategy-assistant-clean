@@ -1,3 +1,4 @@
+// app.js
 (function () {
   const byId = (id) => document.getElementById(id);
   const text = (id) => (byId(id)?.value || "").trim();
@@ -9,14 +10,16 @@
     m.className = "msg" + (bad ? " bad" : "");
   }
 
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
+
   function buildPayload() {
     const orgName = text("orgName");
     const overview = text("overview");
     const moduleCount = parseInt(text("moduleCount") || "0", 10) || 0;
     const audience = text("audience");
-
-    const lx = Array.from(document.querySelectorAll('input[name="lx"]:checked'))
-      .map((el) => el.value);
+    const lx = Array.from(document.querySelectorAll('input[name="lx"]:checked')).map(el => el.value);
 
     const prompt = [
       "ROLE: Instructional Design assistant.",
@@ -36,13 +39,48 @@
       `USER_MODULES: ${moduleCount}`
     ].join("\n");
 
-    // The Worker accepts arbitrary fields. Send both fields and a prompt.
     return { prompt, fields: { orgName, audience, overview, lx, moduleCount } };
   }
 
   function parseJson(str) {
-    try { return JSON.parse(str); } catch { return {}; }
+    try { return JSON.parse(str); } catch {
+      const m = String(str).match(/\{[\s\S]*\}$/);
+      if (!m) return {};
+      try { return JSON.parse(m[0]); } catch { return {}; }
+    }
   }
 
-  function toCourseOutcomes(obj) {
-    // Expect: { modules: [ { name, outcomes: [] } ] }
+  function toSimpleView(obj) {
+    const mods = Array.isArray(obj?.modules) ? obj.modules : [];
+    const lis = mods.map(m => {
+      const name = escapeHtml(m?.name || "Untitled");
+      const outs = Array.isArray(m?.outcomes) ? m.outcomes : [];
+      const inner = outs.map(o => `<li>${escapeHtml(String(o))}</li>`).join("");
+      return `<li><b>${name}</b><ul>${inner}</ul></li>`;
+    }).join("");
+    return `<h3 style="margin:0 0 8px 0">Modules</h3><ol>${lis}</ol>`;
+  }
+
+  async function launch() {
+    try {
+      if (typeof window.runAIDraft !== "function") {
+        throw new Error("window.runAIDraft is not a function. Ensure api/draft.js is loaded before app.js.");
+      }
+      setMsg("Launching AI...");
+      const payload = buildPayload();
+      const draftText = await window.runAIDraft(payload);
+      const obj = parseJson(draftText);
+      byId("results").innerHTML = toSimpleView(obj);
+      byId("raw").textContent = JSON.stringify(obj, null, 2);
+      setMsg("Done.");
+    } catch (e) {
+      console.error(e);
+      setMsg("AI error: " + (e?.message || e), true);
+    }
+  }
+
+  window.addEventListener("DOMContentLoaded", () => {
+    const btn = byId("launchBtn");
+    if (btn) btn.addEventListener("click", (e) => { e.preventDefault(); launch(); });
+  });
+})();
