@@ -5,10 +5,8 @@
   <title>Instructional Design Assistant</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <!-- REQUIRED: set your Worker base URL (no trailing slash) -->
-  <script>
-    window.CF_WORKER_URL = "https://id-assistant.jasons-c51.workers.dev";
-  </script>
+  <!-- Set your Worker URL (no trailing slash) -->
+  <script>window.CF_WORKER_URL="https://id-assistant.jasons-c51.workers.dev";</script>
 
   <style>
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#fafafa}
@@ -22,77 +20,20 @@
     .bad{color:#a00}
   </style>
 
-  <!-- Primary helper defines window.runAIDraft -->
+  <!-- Load helper BEFORE any app code -->
+  <script src="worker-client.js"></script>
+
+  <!-- Inline app (kept simple to avoid order issues) -->
   <script>
     (function(){
-      function base(){
-        const url = (typeof window!=="undefined" && window.CF_WORKER_URL) || "";
-        if(!url) throw new Error("CF_WORKER_URL is not set on window");
-        return url.replace(/\/+$/,"");
-      }
-      async function postJSON(url, body, {signal}={}){
-        const res = await fetch(url, {
-          method:"POST",
-          headers:{ "content-type":"application/json" },
-          body: JSON.stringify(body||{}),
-          signal
-        });
-        let txt = "";
-        if(!res.ok){
-          try{ txt = await res.text(); }catch{}
-          throw new Error("Worker error "+res.status+(txt?(": "+txt):""));
-        }
-        try{ return await res.json(); }catch{ return await res.text(); }
-      }
-      window.runAIDraft = async function runAIDraft(payload,{signal}={}){
-        const raw = await postJSON(base()+"/answer", payload, {signal});
-        if(typeof raw === "string" && raw.trim()) return raw;
-        if(raw && typeof raw === "object"){
-          const draft = raw?.data?.draft ?? raw?.draft ?? raw?.data;
-          if(typeof draft === "string" && draft.trim()) return draft;
-        }
-        throw new Error("Empty model response");
-      };
-    })();
-  </script>
+      const $ = (id)=>document.getElementById(id);
+      const val = (id)=>($(id)?.value||"").trim();
+      function setMsg(t,bad=false){ const n=$("aiMsg"); if(!n)return; n.textContent=t; n.className="msg"+(bad?" bad":""); }
+      function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
-  <!-- App + safety shim -->
-  <script>
-    (function () {
-      // Safety shim: define if some platform stripped the helper
-      if (typeof window.runAIDraft !== "function") {
-        window.runAIDraft = async function(payload){
-          const url = (window.CF_WORKER_URL||"").replace(/\/+$/,"") + "/answer";
-          const res = await fetch(url,{
-            method:"POST",
-            headers:{ "content-type":"application/json" },
-            body: JSON.stringify(payload||{})
-          });
-          let txt=""; try{ return await res.text(); }catch{ return ""; }
-        };
-      }
-
-      const byId = (id) => document.getElementById(id);
-      const text = (id) => (byId(id)?.value || "").trim();
-
-      function setMsg(t, bad = false) {
-        const m = byId("aiMsg");
-        if (!m) return;
-        m.textContent = t;
-        m.className = "msg" + (bad ? " bad" : "");
-      }
-
-      function escapeHtml(s){
-        return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-      }
-
-      function buildPayload() {
-        const orgName = text("orgName");
-        const overview = text("overview");
-        const moduleCount = parseInt(text("moduleCount") || "0", 10) || 0;
-        const audience = text("audience");
-        const lx = Array.from(document.querySelectorAll('input[name="lx"]:checked')).map(el => el.value);
-
+      function buildPayload(){
+        const lx = Array.from(document.querySelectorAll('input[name="lx"]:checked')).map(el=>el.value);
+        const moduleCount = parseInt(val("moduleCount")||"0",10)||0;
         const prompt = [
           "ROLE: Instructional Design assistant.",
           "TASK: Return STRICT JSON only. No markdown. No prose.",
@@ -101,57 +42,47 @@
           "- If user_modules > 0, return exactly user_modules modules.",
           "- If user_modules = 0, choose a sensible number of modules.",
           "- Each module must have 3-6 outcomes.",
-          '- Ban the words "understand" and "understanding".',
+          '- Ban "understand" and "understanding".',
           "- Outcomes must be observable and measurable without percentages.",
           "",
-          `ORGANIZATION: ${orgName || "TBD"}`,
-          `AUDIENCE: ${audience || "TBD"}`,
-          `OVERVIEW: ${overview || "TBD"}`,
-          `LEARNING_EXPERIENCE_TYPES: ${lx.join(", ") || "TBD"}`,
+          `ORGANIZATION: ${val("orgName")||"TBD"}`,
+          `AUDIENCE: ${val("audience")||"TBD"}`,
+          `OVERVIEW: ${val("overview")||"TBD"}`,
+          `LEARNING_EXPERIENCE_TYPES: ${lx.join(", ")||"TBD"}`,
           `USER_MODULES: ${moduleCount}`
         ].join("\n");
-
-        return { prompt, fields: { orgName, audience, overview, lx, moduleCount } };
+        return { prompt, fields: {
+          orgName: val("orgName"),
+          audience: val("audience"),
+          overview: val("overview"),
+          lx, moduleCount
+        }};
       }
 
-      function parseJson(str) {
-        try { return JSON.parse(str); } catch {
-          const m = String(str).match(/\{[\s\S]*\}$/);
-          if (!m) return {};
-          try { return JSON.parse(m[0]); } catch { return {}; }
-        }
+      function parseObj(s){ try{return JSON.parse(s);}catch{ const m=String(s).match(/\{[\s\S]*\}$/); if(!m) return {}; try{return JSON.parse(m[0]);}catch{return{};} } }
+      function render(obj){
+        const mods = Array.isArray(obj?.modules)?obj.modules:[];
+        const html = `<h3 style="margin:0 0 8px 0">Modules</h3><ol>`+
+          mods.map(m=>`<li><b>${esc(m?.name||"Untitled")}</b><ul>${
+            Array.isArray(m?.outcomes)?m.outcomes.map(o=>`<li>${esc(String(o))}</li>`).join(""):""
+          }</ul></li>`).join("")+`</ol>`;
+        $("results").innerHTML = html;
+        $("raw").textContent = JSON.stringify(obj,null,2);
       }
 
-      function toSimpleView(obj) {
-        const mods = Array.isArray(obj?.modules) ? obj.modules : [];
-        const lis = mods.map(m => {
-          const name = escapeHtml(m?.name || "Untitled");
-          const outs = Array.isArray(m?.outcomes) ? m.outcomes : [];
-          const inner = outs.map(o => `<li>${escapeHtml(String(o))}</li>`).join("");
-          return `<li><b>${name}</b><ul>${inner}</ul></li>`;
-        }).join("");
-        return `<h3 style="margin:0 0 8px 0">Modules</h3><ol>${lis}</ol>`;
-      }
-
-      async function launch() {
-        try {
-          if (typeof window.runAIDraft !== "function") throw new Error("runAIDraft not present");
+      async function launch(){
+        try{
+          if(typeof window.runAIDraft!=="function") throw new Error("runAIDraft missing");
           setMsg("Launching AI...");
-          const payload = buildPayload();
-          const draftText = await window.runAIDraft(payload);
-          const obj = parseJson(draftText);
-          byId("results").innerHTML = toSimpleView(obj);
-          byId("raw").textContent = JSON.stringify(obj, null, 2);
+          const draft = await window.runAIDraft(buildPayload());
+          render(parseObj(draft));
           setMsg("Done.");
-        } catch (e) {
-          console.error(e);
-          setMsg("AI error: " + (e?.message || e), true);
-        }
+        }catch(e){ console.error(e); setMsg("AI error: "+(e?.message||e), true); }
       }
 
-      window.addEventListener("DOMContentLoaded", () => {
-        const btn = byId("launchBtn");
-        if (btn) btn.addEventListener("click", (e) => { e.preventDefault(); launch(); });
+      window.addEventListener("DOMContentLoaded", ()=>{
+        const btn = document.getElementById("launchBtn") || document.getElementById("aiBtn");
+        if(btn) btn.addEventListener("click", e=>{ e.preventDefault(); launch(); });
       });
     })();
   </script>
@@ -160,18 +91,15 @@
   <main id="planner">
     <h1 style="margin:0;">Instructional Design Planner</h1>
 
-    <label>
-      <div style="font-weight:600;">Organization Name</div>
+    <label><div style="font-weight:600;">Organization Name</div>
       <input id="orgName" type="text" placeholder="Acme Corp">
     </label>
 
-    <label>
-      <div style="font-weight:600;">Overview</div>
+    <label><div style="font-weight:600;">Overview</div>
       <textarea id="overview" rows="5" placeholder="Project summary, goals, constraints"></textarea>
     </label>
 
-    <label>
-      <div style="font-weight:600;">Number of Modules (leave blank for AI)</div>
+    <label><div style="font-weight:600;">Number of Modules (leave blank for AI)</div>
       <input id="moduleCount" type="number" min="1" style="width:240px;">
     </label>
 
@@ -186,8 +114,7 @@
       </div>
     </div>
 
-    <label>
-      <div style="font-weight:600;">Audience</div>
+    <label><div style="font-weight:600;">Audience</div>
       <input id="audience" type="text" placeholder="Who will be trained">
     </label>
 
