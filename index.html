@@ -1,175 +1,78 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <title>Instructional Design Assistant</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-  <!-- Worker base URL -->
-  <script>
-    window.CF_WORKER_URL = "https://id-assistant.jasons-c51.workers.dev";
-  </script>
-
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#fafafa}
-    #planner{max-width:960px;margin:24px auto;padding:16px;display:grid;gap:16px}
-    label{display:block}
-    input,textarea{width:100%;padding:8px}
-    button{padding:10px 16px;font-weight:600;cursor:pointer}
-    .card{background:#fff;border:1px solid #ddd;border-radius:8px;padding:16px}
-    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-    .msg{min-height:20px}
-    .bad{color:#a00}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:0 0 48px}
+    header{padding:16px 24px;border-bottom:1px solid #e5e7eb}
+    main{max-width:960px;margin:24px auto;padding:0 16px;display:grid;gap:16px}
+    .row{display:grid;gap:8px}
+    label{font-weight:600}
+    textarea,input,button{font:inherit}
+    textarea{width:100%;min-height:120px;padding:10px;border:1px solid #d1d5db;border-radius:8px}
+    button{padding:10px 16px;font-weight:600;cursor:pointer;border-radius:8px;border:1px solid #1f2937;background:#111827;color:#fff}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    pre{background:#f6f7f9;border:1px solid #e5e7eb;border-radius:8px;padding:12px;overflow:auto}
+    .muted{color:#6b7280;font-size:14px}
+    .error{color:#b91c1c;font-weight:600}
+    .ok{color:#065f46;font-weight:600}
   </style>
-
-  <!-- Helper: defines window.runAIDraft -->
-  <script>
-    (function(){
-      function base(){
-        const url = (typeof window!=="undefined" && window.CF_WORKER_URL) || "";
-        if(!url) throw new Error("CF_WORKER_URL is not set on window");
-        return url.replace(/\/+$/,"");
-      }
-      async function postJSON(url, body, {signal}={}){
-        const res = await fetch(url, {
-          method:"POST",
-          headers:{ "content-type":"application/json" },
-          body: JSON.stringify(body||{}),
-          signal
-        });
-        let txt = "";
-        if(!res.ok){
-          try{ txt = await res.text(); }catch{}
-          throw new Error("Worker error "+res.status+(txt?(": "+txt):""));
-        }
-        try{ return await res.json(); }catch{ return await res.text(); }
-      }
-      window.runAIDraft = async function runAIDraft(payload,{signal}={}){
-        const raw = await postJSON(base()+"/answer", payload, {signal});
-        if(typeof raw === "string" && raw.trim()) return raw;
-        if(raw && typeof raw === "object"){
-          const draft = raw?.data?.draft ?? raw?.draft ?? raw?.data;
-          if(typeof draft === "string" && draft.trim()) return draft;
-        }
-        throw new Error("Empty model response");
-      };
-    })();
-  </script>
-
-  <!-- App -->
-  <script>
-    (function(){
-      const $ = (id)=>document.getElementById(id);
-      const val = (id)=>($(id)?.value||"").trim();
-      function setMsg(t,bad=false){ const n=$("aiMsg"); if(!n)return; n.textContent=t; n.className="msg"+(bad?" bad":""); }
-      function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
-
-      function buildPayload(){
-        const lx = Array.from(document.querySelectorAll('input[name="lx"]:checked')).map(el=>el.value);
-        const moduleCount = parseInt(val("moduleCount")||"0",10)||0;
-        const prompt = [
-          "ROLE: Instructional Design assistant.",
-          "TASK: Return STRICT JSON only. No markdown. No prose.",
-          'FORMAT: { "modules": [ { "name": "Module name", "outcomes": ["Outcome 1","Outcome 2","Outcome 3"] } ] }',
-          "RULES:",
-          "- If user_modules > 0, return exactly user_modules modules.",
-          "- If user_modules = 0, choose a sensible number of modules.",
-          "- Each module must have 3-6 outcomes.",
-          '- Ban "understand" and "understanding".',
-          "- Outcomes must be observable and measurable without percentages.",
-          "",
-          `ORGANIZATION: ${val("orgName")||"TBD"}`,
-          `AUDIENCE: ${val("audience")||"TBD"}`,
-          `OVERVIEW: ${val("overview")||"TBD"}`,
-          `LEARNING_EXPERIENCE_TYPES: ${lx.join(", ")||"TBD"}`,
-          `USER_MODULES: ${moduleCount}`
-        ].join("\n");
-        return { prompt, fields: {
-          orgName: val("orgName"),
-          audience: val("audience"),
-          overview: val("overview"),
-          lx, moduleCount
-        }};
-      }
-
-      function parseObj(s){
-        try{ return JSON.parse(s); }
-        catch{
-          const m=String(s).match(/\{[\s\S]*\}$/);
-          if(!m) return {};
-          try{ return JSON.parse(m[0]); } catch{ return {}; }
-        }
-      }
-
-      function render(obj){
-        const mods = Array.isArray(obj?.modules)?obj.modules:[];
-        const html = `<h3 style="margin:0 0 8px 0">Modules</h3><ol>`+
-          mods.map(m=>`<li><b>${esc(m?.name||"Untitled")}</b><ul>${
-            Array.isArray(m?.outcomes)?m.outcomes.map(o=>`<li>${esc(String(o))}</li>`).join(""):""
-          }</ul></li>`).join("")+`</ol>`;
-        $("results").innerHTML = html;
-        $("raw").textContent = JSON.stringify(obj,null,2);
-      }
-
-      async function launch(){
-        try{
-          if(typeof window.runAIDraft!=="function") throw new Error("runAIDraft missing");
-          setMsg("Launching AI...");
-          const draft = await window.runAIDraft(buildPayload());
-          render(parseObj(draft));
-          setMsg("Done.");
-        }catch(e){ console.error(e); setMsg("AI error: "+(e?.message||e), true); }
-      }
-
-      window.addEventListener("DOMContentLoaded", ()=>{
-        const btn = document.getElementById("launchBtn") || document.getElementById("aiBtn");
-        if(btn) btn.addEventListener("click", e=>{ e.preventDefault(); launch(); });
-      });
-    })();
-  </script>
 </head>
 <body>
-  <main id="planner">
-    <h1 style="margin:0;">Instructional Design Planner</h1>
+  <header>
+    <h1>Instructional Design Assistant</h1>
+    <p class="muted">Generate outcomes and modules. Uses <code>/api/draft</code> on this site.</p>
+  </header>
 
-    <label><div style="font-weight:600;">Organization Name</div>
-      <input id="orgName" type="text" placeholder="Acme Corp">
-    </label>
+  <main>
+    <section class="row">
+      <label for="notes">Optional notes to include in the draft request</label>
+      <textarea id="notes" placeholder="Key goals, constraints, audience, or paste brief context"></textarea>
+      <button id="aiBtn">Launch AI Instructional Designer</button>
+      <div id="status" class="muted"></div>
+    </section>
 
-    <label><div style="font-weight:600;">Overview</div>
-      <textarea id="overview" rows="5" placeholder="Project summary, goals, constraints"></textarea>
-    </label>
-
-    <label><div style="font-weight:600;">Number of Modules (leave blank for AI)</div>
-      <input id="moduleCount" type="number" min="1" style="width:240px;">
-    </label>
-
-    <div>
-      <div style="font-weight:600;">Learning Experience Types</div>
-      <div style="display:grid;gap:8px;margin-top:8px;">
-        <label><input type="checkbox" name="lx" value="Live Session"> Live Session</label>
-        <label><input type="checkbox" name="lx" value="Coaching/Mentoring"> Coaching/Mentoring</label>
-        <label><input type="checkbox" name="lx" value="eLearning"> eLearning</label>
-        <label><input type="checkbox" name="lx" value="Software Simulation"> Software Simulation</label>
-        <label><input type="checkbox" name="lx" value="Practical Application Activities"> Practical Application Activities</label>
-      </div>
-    </div>
-
-    <label><div style="font-weight:600;">Audience</div>
-      <input id="audience" type="text" placeholder="Who will be trained">
-    </label>
-
-    <button id="launchBtn">Launch AI Assistant</button>
-    <div id="aiMsg" class="msg"></div>
-
-    <section class="card" aria-live="polite">
-      <h2 style="margin:0 0 8px 0;">Result</h2>
-      <div id="results"></div>
-      <details style="margin-top:10px">
-        <summary>Raw JSON</summary>
-        <pre id="raw" class="mono">{}</pre>
-      </details>
+    <section class="row">
+      <label>Response</label>
+      <pre id="output">{ }</pre>
     </section>
   </main>
+
+  <script>
+    async function launchAI() {
+      const btn = document.getElementById('aiBtn');
+      const out = document.getElementById('output');
+      const status = document.getElementById('status');
+      btn.disabled = true;
+      status.textContent = 'Requesting /api/draft...';
+
+      try {
+        const payload = { notes: document.getElementById('notes').value || '' };
+        const res = await fetch('/api/draft', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        status.textContent = res.ok ? 'OK' : `Error ${res.status}`;
+        const data = await res.json().catch(() => ({ error: 'Non-JSON response' }));
+
+        out.textContent = JSON.stringify(data, null, 2);
+        if (!res.ok) status.className = 'error'; else status.className = 'ok';
+      } catch (err) {
+        status.className = 'error';
+        status.textContent = 'Network or JS error';
+        out.textContent = JSON.stringify({ error: String(err) }, null, 2);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('aiBtn').addEventListener('click', launchAI);
+    });
+  </script>
 </body>
 </html>
