@@ -5,8 +5,10 @@
   <title>Instructional Design Assistant</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <!-- Set your Worker URL (no trailing slash) -->
-  <script>window.CF_WORKER_URL="https://id-assistant.jasons-c51.workers.dev";</script>
+  <!-- Worker base URL -->
+  <script>
+    window.CF_WORKER_URL = "https://id-assistant.jasons-c51.workers.dev";
+  </script>
 
   <style>
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#fafafa}
@@ -20,10 +22,41 @@
     .bad{color:#a00}
   </style>
 
-  <!-- Load helper BEFORE any app code -->
-  <script src="worker-client.js"></script>
+  <!-- Helper: defines window.runAIDraft -->
+  <script>
+    (function(){
+      function base(){
+        const url = (typeof window!=="undefined" && window.CF_WORKER_URL) || "";
+        if(!url) throw new Error("CF_WORKER_URL is not set on window");
+        return url.replace(/\/+$/,"");
+      }
+      async function postJSON(url, body, {signal}={}){
+        const res = await fetch(url, {
+          method:"POST",
+          headers:{ "content-type":"application/json" },
+          body: JSON.stringify(body||{}),
+          signal
+        });
+        let txt = "";
+        if(!res.ok){
+          try{ txt = await res.text(); }catch{}
+          throw new Error("Worker error "+res.status+(txt?(": "+txt):""));
+        }
+        try{ return await res.json(); }catch{ return await res.text(); }
+      }
+      window.runAIDraft = async function runAIDraft(payload,{signal}={}){
+        const raw = await postJSON(base()+"/answer", payload, {signal});
+        if(typeof raw === "string" && raw.trim()) return raw;
+        if(raw && typeof raw === "object"){
+          const draft = raw?.data?.draft ?? raw?.draft ?? raw?.data;
+          if(typeof draft === "string" && draft.trim()) return draft;
+        }
+        throw new Error("Empty model response");
+      };
+    })();
+  </script>
 
-  <!-- Inline app (kept simple to avoid order issues) -->
+  <!-- App -->
   <script>
     (function(){
       const $ = (id)=>document.getElementById(id);
@@ -59,7 +92,15 @@
         }};
       }
 
-      function parseObj(s){ try{return JSON.parse(s);}catch{ const m=String(s).match(/\{[\s\S]*\}$/); if(!m) return {}; try{return JSON.parse(m[0]);}catch{return{};} } }
+      function parseObj(s){
+        try{ return JSON.parse(s); }
+        catch{
+          const m=String(s).match(/\{[\s\S]*\}$/);
+          if(!m) return {};
+          try{ return JSON.parse(m[0]); } catch{ return {}; }
+        }
+      }
+
       function render(obj){
         const mods = Array.isArray(obj?.modules)?obj.modules:[];
         const html = `<h3 style="margin:0 0 8px 0">Modules</h3><ol>`+
