@@ -1,51 +1,93 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>Instructional Design Assistant</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <script>
-    // REQUIRED: your Worker base URL
-    window.CF_WORKER_URL = "https://id-assistant.jasons-c51.workers.dev";
-  </script>
-  <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:0 0 48px}
-    header{padding:16px 24px;border-bottom:1px solid #e5e7eb}
-    main{max-width:960px;margin:24px auto;padding:0 16px;display:grid;gap:16px}
-    .row{display:grid;gap:8px}
-    label{font-weight:600}
-    textarea,input,button{font:inherit}
-    textarea{width:100%;min-height:120px;padding:10px;border:1px solid #d1d5db;border-radius:8px}
-    button{padding:10px 16px;font-weight:600;cursor:pointer;border-radius:8px;border:1px solid #1f2937;background:#111827;color:#fff}
-    button:disabled{opacity:.6;cursor:not-allowed}
-    pre{background:#f6f7f9;border:1px solid #e5e7eb;border-radius:8px;padding:12px;overflow:auto}
-    .muted{color:#6b7280;font-size:14px}
-    .error{color:#b91c1c;font-weight:600}
-    .ok{color:#065f46;font-weight:600}
-  </style>
-</head>
-<body>
-  <header>
-    <h1>Instructional Design Assistant</h1>
-    <p class="muted">Calls your Cloudflare Worker at <code>window.CF_WORKER_URL</code>.</p>
-  </header>
+// api/draft.js — server route that proxies to your Cloudflare Worker /draft and normalizes output.
 
-  <main>
-    <section class="row">
-      <label for="notes">Optional notes to include in the draft request</label>
-      <textarea id="notes" placeholder="Key goals, constraints, audience, or brief context"></textarea>
-      <button id="aiBtn">Launch AI Instructional Designer</button>
-      <div id="status" class="muted"></div>
-    </section>
+export const config = { runtime: "nodejs" };
 
-    <section class="row">
-      <label>Response</label>
-      <pre id="output">{ }</pre>
-    </section>
-  </main>
+async function readJsonBody(req) {
+  try {
+    if (req.body && typeof req.body === "object") return req.body;
+    const chunks = []; for await (const c of req) chunks.push(c);
+    const str = Buffer.concat(chunks).toString("utf8");
+    return str ? JSON.parse(str) : {};
+  } catch { return {}; }
+}
 
-  <!-- Load helper first, then app -->
-  <script src="./api/draft.js"></script>
-  <script src="./app.js"></script>
-</body>
-</html>
+function send(res, status, body, extra = {}) {
+  res.statusCode = status;
+  res.setHeader("Content-Type", extra["content-type"] || "application/json");
+  for (const [k, v] of Object.entries(extra)) {
+    if (k.toLowerCase() !== "content-type") res.setHeader(k, v);
+  }
+  res.end(typeof body === "string" ? body : JSON.stringify(body));
+}
+
+// --- normalization ---
+const asArr = (x) => Array.isArray(x) ? x : [];
+const S = (x) => (x == null ? "" : String(x)).trim();
+
+const normOutcome = (o) => typeof o === "string"
+  ? { title: S(o), description: "", behaviors: [] }
+  : {
+      title: S(o.title ?? o.text ?? o.name),
+      description: S(o.description ?? o.objective ?? o.summary),
+      behaviors: asArr(o.behaviors ?? o.bullets ?? o.steps ?? o.actions).map(S).filter(Boolean),
+    };
+
+const normModule = (m) => typeof m === "string"
+  ? { title: S(m), objective: "", activities: [] }
+  : {
+      title: S(m.title ?? m.name),
+      objective: S(m.objective ?? m.description ?? m.summary),
+      activities: asArr(m.activities ?? m.outline ?? m.steps ?? m.tasks).map(S).filter(Boolean),
+    };
+
+function normalizeToDraft(json) {
+  const root = json?.draft ?? json?.result ?? json?.answer ?? json;
+  const outcomes = asArr(root?.outcomes ?? json?.outcomes ?? []);
+  const modules  = asArr(root?.modules  ?? json?.modules  ?? []);
+  return {
+    outcomes: outcomes.map(normOutcome).filter(x => x.title || x.description || x.behaviors?.length),
+    modules:  modules.map(normModule).filter(x => x.title || x.objective || x.activities?.length),
+  };
+}
+
+export default async function handler(req, res) {
+  if (req.method !== "POST") return send(res, 405, { error: "method_not_allowed" });
+
+  const BASE_URL = process.env.CF_WORKER_URL;
+  if (!BASE_URL) return send(res, 500, { error: "CF_WORKER_URL not set" });
+
+  const url = BASE_URL.replace(/\/+$/, "") + "/draft";
+  const payload = await readJsonBody(req);
+
+  const headers = { "content-type": "application/json" };
+  const bearer = (process.env.CF_WORKER_TOKEN || "").trim();
+  const xApi   = (process.env.WORKER_API_KEY || "").trim();
+  const xAdmin = (process.env.ADMIN_TOKEN || "").trim();
+  if (bearer) headers.authorization = `Bearer ${bearer}`;
+  if (xApi)   headers["x-api-key"] = xApi;
+  if (xAdmin) headers["x-admin-token"] = xAdmin;
+
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), 60_000);
+
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      signal: ac.signal,
+    });
+
+    const text = await r.text();
+    let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
+
+    const draft = normalizeToDraft(json);
+    return send(res, r.ok ? 200 : 502, { ok: r.ok, draft, worker: json }, {
+      "x-proxy-used-endpoint": "/draft",
+    });
+  } catch (e) {
+    return send(res, 504, { ok: false, error: "worker_unreachable", detail: String(e) });
+  } finally {
+    clearTimeout(t);
+  }
+}
