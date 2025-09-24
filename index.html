@@ -23,7 +23,7 @@
 <body>
   <header>
     <h1>Instructional Design Assistant</h1>
-    <p class="muted">Calls your Cloudflare Worker directly.</p>
+    <p class="muted">This UI posts to <code>/api/draft</code> on the same site.</p>
   </header>
 
   <main>
@@ -40,58 +40,7 @@
     </section>
   </main>
 
-  <script>
-    // Your Worker base URL
-    const WORKER_BASE = "https://id-assistant.jasons-c51.workers.dev";
-
-    async function callWorker(path, body) {
-      const url = WORKER_BASE.replace(/\/+$/,'') + path; // normalize trailing slash
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body || {})
-      });
-      return res;
-    }
-
-    async function launchAI() {
-      const btn = document.getElementById('aiBtn');
-      const out = document.getElementById('output');
-      const status = document.getElementById('status');
-      btn.disabled = true;
-      status.className = 'muted';
-      status.textContent = 'Calling /answer at your Worker...';
-
-      try {
-        const payload = { notes: document.getElementById('notes').value || '' };
-
-        // Try /answer first, then /draft
-        let res = await callWorker('/answer', payload);
-        if (!res.ok) {
-          status.textContent = `Answer fallback: trying /draft (prev ${res.status})...`;
-          res = await callWorker('/draft', payload);
-        }
-
-        const text = await res.text();
-        let data;
-        try { data = JSON.parse(text); }
-        catch { data = { raw: text }; }
-
-        status.textContent = res.ok ? 'OK' : `Error ${res.status}`;
-        status.className = res.ok ? 'ok' : 'error';
-        out.textContent = JSON.stringify(data, null, 2);
-      } catch (err) {
-        status.className = 'error';
-        status.textContent = 'Network or CORS error';
-        out.textContent = JSON.stringify({ error: String(err) }, null, 2);
-      } finally {
-        btn.disabled = false;
-      }
-    }
-
-    document.addEventListener('DOMContentLoaded', () => {
-      document.getElementById('aiBtn').addEventListener('click', launchAI);
-    });
-  </script>
+  <!-- Only this script. No api/draft.js -->
+  <script src="./app.js"></script>
 </body>
 </html>
