@@ -7,7 +7,7 @@
 
   <!-- REQUIRED: set your Worker base URL (no trailing slash) -->
   <script>
-    window.CF_WORKER_URL = "https://id-assistant.jasons-c51.workers.dev/";
+    window.CF_WORKER_URL = "https://id-assistant.jasons-c51.workers.dev";
   </script>
 
   <style>
@@ -22,7 +22,7 @@
     .bad{color:#a00}
   </style>
 
-  <!-- Helper: defines window.runAIDraft BEFORE app code -->
+  <!-- Primary helper defines window.runAIDraft -->
   <script>
     (function(){
       function base(){
@@ -56,9 +56,22 @@
     })();
   </script>
 
-  <!-- App (inline to remove ordering problems) -->
+  <!-- App + safety shim -->
   <script>
     (function () {
+      // Safety shim: define if some platform stripped the helper
+      if (typeof window.runAIDraft !== "function") {
+        window.runAIDraft = async function(payload){
+          const url = (window.CF_WORKER_URL||"").replace(/\/+$/,"") + "/answer";
+          const res = await fetch(url,{
+            method:"POST",
+            headers:{ "content-type":"application/json" },
+            body: JSON.stringify(payload||{})
+          });
+          let txt=""; try{ return await res.text(); }catch{ return ""; }
+        };
+      }
+
       const byId = (id) => document.getElementById(id);
       const text = (id) => (byId(id)?.value || "").trim();
 
@@ -122,9 +135,7 @@
 
       async function launch() {
         try {
-          if (typeof window.runAIDraft !== "function") {
-            throw new Error("window.runAIDraft is not a function");
-          }
+          if (typeof window.runAIDraft !== "function") throw new Error("runAIDraft not present");
           setMsg("Launching AI...");
           const payload = buildPayload();
           const draftText = await window.runAIDraft(payload);
